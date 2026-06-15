@@ -91,18 +91,21 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 ## Active tasks
 
 ### T-001 — Python project scaffold
-- **Status:** claimed
+- **Status:** done
 - **Priority:** P0
 - **Role:** core-engineer
 - **Owner:** core-engineer
 - **Phase:** 0
 - **Created:** 2026-06-15T00:00:00Z
 - **Claimed:** 2026-06-15T22:55:20Z
+- **Completed:** 2026-06-15T22:58:46Z
 - **Depends on:** —
 - **Description:** Stand up the `jarvis` Python package (3.11+): package layout, dependency/venv management, pytest, and lint/format. Establish the home the core modules and adapters live in, distinct from `prototypes/`.
 - **Acceptance:** `pytest` runs (zero tests is fine); the package imports; lint/format configured and passing; a `.gitignore` covers Python artifacts, `.DS_Store`, and any audio/model caches.
 - **Progress:**
-- **Notes:** The `prototypes/attention-layer/` code is reference, not the package — port logic into the real package deliberately.
+  - 2026-06-15T22:55Z — claimed; installed uv 0.11.21 (standalone, non-interactive) to get managed CPython 3.11.15.
+  - 2026-06-15T22:58Z — src-layout `src/jarvis/` + pyproject (requires-python >=3.11, hatchling); pytest + ruff wired; 2 smoke tests pass; ruff lint+format clean; package imports. Module map written.
+- **Notes:** DONE (no reviewer needed for scaffolding). Toolchain: uv + src-layout + pytest + ruff (see DECISIONS.md). `uv.lock` + `.python-version` committed; `prototypes/` excluded from ruff (reference, not package). **Next unblocked: T-002 (RollingWindow + core data types)** — freeze `Utterance` there and inject the clock into RollingWindow's time-bound (do NOT use `time.monotonic()` internally; qa-tuning's T-009 harness needs the injected clock). Seam contract is in `docs/architecture/module-map.md`.
 
 ### T-002 — Core data types + RollingWindow (with tests)
 - **Status:** open

@@ -18,6 +18,15 @@ Keep entries short. One paragraph per field is plenty. If it takes more, it prob
 
 ---
 
+## 2026-06-15 — Phase 0 toolchain: uv + src-layout + pytest + ruff
+
+**Decided by:** Claude Code (core-engineer) — T-001 scaffold
+**Status:** accepted
+**Context:** T-001 stands up the real `jarvis` package. The stack requires Python 3.11+, but the machine's system `python3` is 3.9.6 and no 3.11+ was installed (no pyenv, no brewed python3.11).
+**Decision:** Use **uv** (0.11.x, installed via the official standalone installer to `~/.local/bin` — no sudo, no interactive prompts) to manage a pinned **CPython 3.11.15** and the venv. Package uses a **src-layout** (`src/jarvis/`) with a `pyproject.toml` (`requires-python = ">=3.11"`, hatchling build backend). **pytest** is the test runner (`pythonpath = ["src"]`, `testpaths = ["tests"]`); **ruff** is lint + format (line-length 100, target py311, rule set E/W/F/I/N/UP/B/C4/SIM). `prototypes/` is excluded from ruff — it is reference, not the package. `uv.lock` and `.python-version` are committed to pin the toolchain.
+**Rationale:** uv is the fastest, fully non-interactive way to obtain a managed 3.11 without touching the system Python or running a heavy/interactive installer — exactly the environment-note guidance in the task. src-layout prevents accidental imports of the un-built package and keeps the import surface honest. ruff is one tool for lint + format, fast, zero-config-friendly.
+**Alternatives considered:** pyenv (rejected — not installed; heavier setup than the uv standalone binary). Homebrew `python3.11` + stdlib `venv` (viable fallback but slower to provision and no lockfile). flat-layout (rejected — src-layout is the project's recommended layout and avoids shadowing). black + flake8 + isort (rejected — ruff subsumes all three in one fast tool).
+
 ## 2026-06-15 — Asymmetric dual-summon (fast when called, polite when interjecting)
 
 **Decided by:** discussion (human + research)

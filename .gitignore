@@ -11,6 +11,9 @@ venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+build/
+dist/
+# Note: uv.lock and .python-version ARE tracked — they pin the toolchain.
 
 # Local model / audio caches (Jarvis sensing + ML)
 models/
