@@ -109,19 +109,38 @@ class WallVerdict:        # FROZEN (T-005) — what a WallBackend returns
     offer: str               # the single sentence Jarvis would say, if it spoke
     # WallVerdict.none() builds the common (False, NONE, 0.0, "") result.
 
-@dataclass(frozen=True)
-class Interjection:       # a Path-B offer that cleared the gate
-    category: str
-    offer: str
-    confidence: float
+class TriggerReason(StrEnum):  # FROZEN (T-007) — which initiation path fired
+    SUMMON       = "summon"        # Path A — wake word
+    INTERJECTION = "interjection"  # Path B — a detected wall cleared every gate
 
 @dataclass(frozen=True)
-class EngagementHandoff:  # THE boundary output (the seam to the engaged half)
-    trigger_reason: str   # "summon" | "wall:<category>"
-    summary: str          # LivingSummary.text at engage time
-    recent_excerpt: str   # last few rendered lines
+class Interjection:       # FROZEN (T-007) — a Path-B offer that cleared the gate
+    category: WallCategory   # never NONE (an interjection exists only for a real wall)
+    offer: str
+    confidence: float        # >= the controller's interjection floor; surfaced for the eval
+
+@dataclass(frozen=True)
+class SummonDecision:    # FROZEN (T-007) — what SummonController emits when Jarvis engages
+    reason: TriggerReason
+    interjection: Interjection | None = None   # set iff reason is INTERJECTION (Path B)
+    detail: str = ""                           # the summon utterance (Path A)
+    # .handoff_reason() -> "summon" | "wall:<category>" (the EngagementHandoff wire string)
+
+@dataclass(frozen=True)
+class EngagementHandoff:  # THE boundary output (the seam to the engaged half); shape frozen T-007
+    trigger_reason: str   # "summon" | "wall:<category>"  (== SummonDecision.handoff_reason())
+    summary: str          # LivingSummary.text at engage time   (orchestrator-supplied, T-008)
+    recent_excerpt: str   # last few rendered lines             (orchestrator-supplied, T-008)
     detail: str = ""      # e.g. the summon utterance
 ```
+
+**The decision/handoff boundary (T-007):** `SummonController` is a **pure decision
+machine** — it emits a `SummonDecision` (which path + payload) and does **not**
+assemble the `EngagementHandoff`. It holds neither the `LivingSummary` nor the
+`RollingWindow`, so it *can't* fill `summary`/`recent_excerpt`; the **orchestrator**
+(T-008) owns those and assembles the handoff (Path A) or dispatches the offer
+(Path B) from the decision. `SummonDecision.handoff_reason()` gives the orchestrator
+the `trigger_reason` wire string for free. (Logged in DECISIONS.md 2026-06-15.)
 
 `Utterance` is **frozen as of T-002** (`jarvis/types.py`): immutable, three fields,
 and `ts` is **required** — supplied by the producer (the injected clock or the VAD
@@ -133,9 +152,10 @@ hidden clock" constraint true all the way down to the data type and lets
 `EngagementHandoff` is the two-way seam with voice-integration-engineer: I own its
 shape, they own whether it carries enough context. `WallVerdict` is **frozen as of
 T-005** (`jarvis/types.py`, with the `WallCategory` `StrEnum`) — `SummonController`'s
-`WALL_CONFIDENCE_TO_SPEAK` gate reads its `confidence` field. (`Interjection` and
-`EngagementHandoff` are documented above but land in `types.py` with their own
-tasks — T-007 / T-008 — so each freezes when its first real consumer does.)
+`interjection_confidence_floor` gate reads its `confidence` field. `Interjection`,
+`SummonDecision` and `TriggerReason` are **frozen as of T-007** (`jarvis/types.py`),
+and `EngagementHandoff`'s shape is frozen there too (the orchestrator assembles it
+in T-008 — see the decision/handoff boundary above).
 
 #### Contract for the real backend (T-203, local-ml-engineer)
 
@@ -278,31 +298,56 @@ segment callbacks in Phase 3 (T-301). The two thresholds are constructor-injecte
 (the asymmetry from DECISIONS.md), so qa-tuning tunes them in one place (Phase 5).
 See DECISIONS.md 2026-06-15 "TurnTakingGate event-input API".
 
-### `SummonController` — the asymmetric dual-path state machine (T-007) · **review-gated**
-The heart of the MVP. Turns gate + detector signals into either an
-`EngagementHandoff` (summon) or an `Interjection` offer.
+### `SummonController` — the asymmetric dual-path state machine (T-007) · **review-gated** · **done (pending qa-tuning review)**
+The heart of the MVP and the carrier of the success metric. Turns gate + detector
+signals into a `SummonDecision` (it does **not** assemble the handoff — see the
+decision/handoff boundary, above). Holds an injected `TurnTakingGate`; reads no
+clock of its own (timing comes through the gate's pure predicates).
+```
+SummonController(gate: TurnTakingGate,
+                 interjection_confidence_floor: float = 0.70)   # [0,1], precision over recall
+# Path A — summon (immediate, unconditional):
+on_summon(detail: str = "") -> SummonDecision                   # reason=SUMMON; ignores gate/wall/floor/back-off
+# Path B — interjection (all conditions must hold; else None):
+consider_interjection(verdict: WallVerdict) -> SummonDecision | None
+interjection_confidence_floor -> float                         # read-only, the injected floor
+```
 
 ```
 LISTENING
-  ├─ wake word in utterance ───────────────────────────► ENGAGE(reason="summon")   # Path A: immediate, unconditional
-  └─ gap ≥ settle ──► run WallDetector
-        └─ is_wall ∧ confidence ≥ THRESH ──────────────► PENDING_INTERJECTION
-PENDING_INTERJECTION
-  ├─ speech resumes ───────────────────────────────────► LISTENING   (abort, yield floor)
-  ├─ silence reaches politeness_gap (~2 s) ────────────► OFFER(interjection)
-  └─ same wall already offered (back-off) ─────────────► LISTENING   (no nagging)
+  ├─ wake word ──► on_summon() ────────────────────────► SummonDecision(SUMMON)   # Path A: immediate, unconditional
+  └─ consider_interjection(verdict):
+        is_wall ∧ confidence ≥ floor ────────────────────► (pending — evaluate the gate)
+PENDING_INTERJECTION  (re-evaluated each call as time advances)
+  ├─ gate.speech_resumed() ────────────────────────────► None   (abort, yield floor — checked first)
+  ├─ ¬gate.politeness_gap_elapsed() ───────────────────► None   (wait for the ~2 s opening)
+  ├─ same wall already offered (back-off) ─────────────► None   (no nagging)
+  └─ else ─────────────────────────────────────────────► SummonDecision(INTERJECTION)
 ```
+
+**Path-B conditions (ALL must hold), checked in this order:** `is_wall` →
+`confidence ≥ floor` → `¬speech_resumed` (**abort takes precedence over the gap** —
+a latched resume suppresses even a stale-elapsed gap) → `politeness_gap_elapsed` →
+back-off (the wall's `category::offer` signature ≠ the last *offered* one). Only a
+fire arms back-off; a dropped/aborted wall does not. The back-off signature
+deliberately excludes confidence (a re-detection of one wall at a different
+confidence is the same offer).
 
 **The asymmetry is the contract** (PRD 02, DECISIONS.md 2026-06-15):
 
 | | Path A — Summon | Path B — Interjection |
 |---|---|---|
-| Endpoint gap | ~500–700 ms | **~2 s politeness gap** |
-| Confidence bar | low (it was summoned) | **≥ ~0.70** |
+| Endpoint gap | none — fires now | the gate's **~2 s politeness gap** |
+| Confidence bar | none (it was summoned) | **≥ 0.70** (`interjection_confidence_floor`, inclusive) |
 | If speech resumes | n/a | **abort** |
+| De-dupe | n/a | **back-off** (same wall never offered twice in a row) |
 
-Path A is **never** gated by Path B's conditions. Both paths take the clock and
-the `WallDetector` via the constructor (qa-tuning injects fakes for both).
+Path A is **never** gated by Path B's conditions. The gate is injected (qa-tuning
+builds it on the `SimulatedClock`); the `WallVerdict` is passed in per call (the
+orchestrator runs the `WallDetector` and hands the verdict over), so the
+controller stays a pure state machine over (gate, verdict). The
+`interjection_confidence_floor` is constructor-injected, guarded to `[0,1]`, and
+is the one knob Phase-5 (T-503) sweeps against the precision metric.
 
 ### `AttentionLayer` — orchestrator (T-008)
 Wires the above and emits exactly three events. Runs end-to-end against
@@ -360,7 +405,7 @@ src/jarvis/
 │   ├── living_summary.py      # T-004  ✅ done (+ SummarizerBackend Protocol)
 │   ├── wall_detector.py       # T-005  ✅ done (WallDetector + WallBackend Protocol + HeuristicWallBackend)
 │   ├── turn_taking_gate.py    # T-006  ✅ done (on_speech_start/end events + 3 predicates on injected clock)
-│   └── summon_controller.py   # T-007
+│   └── summon_controller.py   # T-007  ✅ done (SummonController; emits SummonDecision, not the handoff)
 ├── adapters/
 │   ├── transcript_source.py   # TranscriptSource + ScriptedSource  (core)
 │   ├── backends.py            # SummarizerBackend / WallBackend protocols + mocks

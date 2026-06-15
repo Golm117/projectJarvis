@@ -18,6 +18,15 @@ Keep entries short. One paragraph per field is plenty. If it takes more, it prob
 
 ---
 
+## 2026-06-15 — SummonController emits a decision, the orchestrator assembles the handoff (T-007)
+
+**Decided by:** Claude Code (core-engineer) — T-007
+**Status:** accepted
+**Context:** The module map said `SummonController` "turns gate + detector signals into either an `EngagementHandoff` (summon) or an `Interjection` offer." But the full `EngagementHandoff` needs `summary` (`LivingSummary.text`) and `recent_excerpt` (rendered `RollingWindow` lines) — neither of which the controller holds; both live in the orchestrator (`AttentionLayer`, T-008). Letting the controller build the handoff would force it to take the summary + window (or the whole orchestrator) as dependencies, fattening the success-metric-critical state machine and coupling it to plumbing it doesn't otherwise touch.
+**Decision:** `SummonController` is a **pure decision machine**. It emits a frozen `SummonDecision` — `reason: TriggerReason` (`SUMMON` | `INTERJECTION`), an optional `Interjection` (Path B only), and `detail` (the summon text, Path A) — plus a `handoff_reason()` helper returning the `"summon"` / `"wall:<category>"` wire string. The **orchestrator** (T-008) turns a summon decision into an `EngagementHandoff` (adding `summary` + `recent_excerpt`) and a interjection decision into a dispatched offer. The controller's only inputs are the injected `TurnTakingGate` and a per-call `WallVerdict`; its only carried state is the back-off signature. `Interjection`, `SummonDecision`, `TriggerReason` land in `types.py` at T-007; `EngagementHandoff`'s shape is frozen there too but it is *built* at T-008.
+**Rationale:** Keeps the riskiest module (qa-tuning's mandatory-review target, the success metric) tiny and fully unit-testable in isolation over (gate, verdict) — no summary/window fakes needed to test the decision logic. Handoff assembly stays in the one place that already owns the summary and window, so there's a single assembly site and no duplicated context-gathering. The seam to voice-integration-engineer (`EngagementHandoff`) is unchanged — its shape is still frozen here.
+**Alternatives considered:** (a) Controller builds the full `EngagementHandoff` (rejected — needs the summary + window injected, coupling the state machine to orchestrator-owned context and bloating the review surface). (b) Controller returns a raw `WallVerdict` / bare bool and the orchestrator re-derives the path (rejected — loses the typed two-path decision and the `handoff_reason` convention; pushes Path-A-vs-B branching into the caller). (c) The controller also runs the `WallDetector` internally (rejected — the orchestrator already gates *when* to run detection on a cheap wall signal per the event flow; passing the verdict in keeps the controller a pure function of its two real inputs and avoids it deciding when to spend the detector).
+
 ## 2026-06-15 — TurnTakingGate event-input API: VAD boundary events on the injected clock (T-006)
 
 **Decided by:** Claude Code (core-engineer) — T-006

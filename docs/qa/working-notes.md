@@ -24,11 +24,47 @@ green (24 total), ruff clean.
 
 ### Next for qa-tuning
 
+- **→ MANDATORY REVIEW PENDING: T-007 (SummonController)** — built by core-engineer,
+  now in `review` (see the "T-007 handed off for review" block below for what to
+  check). Suite 121 green, ruff clean.
 - **T-010** — interjection-precision eval spec (fixture format + precision
-  computation). Stub section already in `eval-plan.md`. Depends on T-007.
+  computation). Stub section already in `eval-plan.md`. Depends on T-007 — now
+  unblocked once T-007 review passes; T-008 (the pipeline) is the other input.
 - Mandatory review of ~~T-005 (WallDetector)~~ (approved, below),
-  ~~T-006 (TurnTakingGate)~~ (approved, below), T-007 (SummonController)
-  before merge.
+  ~~T-006 (TurnTakingGate)~~ (approved, below), ~~T-007 (SummonController)~~
+  (handed off, awaiting review — below).
+
+## T-007 SummonController handed off for review (2026-06-16) — AWAITING qa-tuning
+
+core-engineer built `SummonController` (`src/jarvis/core/summon_controller.py`),
+now in `review` (mandatory trigger — it carries the success metric). Suite **121
+green**, ruff lint+format clean. What to verify:
+
+- **Decision/handoff boundary (structural call):** the controller is a *pure
+  decision machine* — it emits a frozen `SummonDecision`, NOT the
+  `EngagementHandoff` (it holds neither summary nor window). The orchestrator
+  (T-008) assembles the handoff. Logged in DECISIONS.md 2026-06-16; documented in
+  module-map §SummonController. Confirm this split is sound for the eval (T-010
+  scores the emitted `Interjection.category`/`.confidence`, which the decision
+  carries directly).
+- **Threshold:** `interjection_confidence_floor=0.70` (matches the prototype's
+  `WALL_CONFIDENCE_TO_SPEAK`), constructor-injected + `[0,1]`-guarded, inclusive
+  (`>=`). Kept in SummonController, not the detector (consistent with the T-005
+  review finding that the speak gate is controller policy).
+- **Path B condition order:** `is_wall → confidence ≥ floor → ¬speech_resumed →
+  politeness_gap_elapsed → back-off`. Note **abort precedes the gap** on purpose:
+  a latched resume must suppress even if the gap reads stale-elapsed
+  (`test_resume_suppresses_even_if_a_stale_gap_reads_elapsed`). Worth confirming
+  this ordering matches the precision intent (never talk over resumed speech).
+- **Back-off** de-dupes by `category::offer` (confidence excluded — a re-detection
+  of one wall at a different confidence is the same offer); only a *fire* arms it
+  (`test_a_dropped_wall_does_not_arm_backoff`); semantics are "twice in a row"
+  (`test_a_new_wall_fires_after_an_intervening_different_wall`).
+- **Tests** (`tests/test_summon_controller.py`, 24): assert only on the returned
+  `SummonDecision`/`None` and public predicates of the *real* injected gate driven
+  by the `SimulatedClock` — no reach into controller internals (golden rule). The
+  coverage items recorded for T-007 in the T-005/T-006 review are detector-/gate-
+  level (multi-cue priority, confidence-ordering) and unaffected here.
 
 ## T-005 + T-006 review (2026-06-15) — APPROVED both
 

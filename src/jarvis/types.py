@@ -18,9 +18,21 @@ Frozen status (module map):
   shape** via structured output in Phase 2 (T-203). See the "Contract for the
   real backend (T-203)" note below.
 
-``Interjection`` and ``EngagementHandoff`` land with their tasks (T-007/T-008).
-They are documented in the module map and added here as those tasks land so
-each type freezes exactly when its first real consumer does.
+``Interjection``, ``SummonDecision`` and ``EngagementHandoff`` land with their
+tasks (T-007/T-008). They are documented in the module map and added here as
+those tasks land so each type freezes exactly when its first real consumer does.
+
+* ``Interjection`` / ``SummonDecision`` — **added (T-007)**. ``SummonController``
+  is a *pure decision* machine: it emits a ``SummonDecision`` (which path fired,
+  the trigger reason, and — for a Path-B fire — the ``Interjection`` offer). It
+  does **not** assemble the full ``EngagementHandoff`` (it holds neither the
+  living summary nor the rolling window — those live in the orchestrator). The
+  orchestrator (T-008) turns a summon ``SummonDecision`` into an
+  ``EngagementHandoff`` by adding the summary + recent excerpt it owns. See the
+  module map §"SummonController" (the decision/handoff boundary) and DECISIONS.md.
+
+* ``EngagementHandoff`` — documented here (T-007) so the boundary shape is frozen
+  for voice-integration-engineer; the orchestrator assembles it in T-008.
 """
 
 from __future__ import annotations
@@ -109,3 +121,113 @@ class WallVerdict:
     def none(cls) -> WallVerdict:
         """The 'no wall, stay silent' verdict — the common default."""
         return cls(is_wall=False, category=WallCategory.NONE, confidence=0.0, offer="")
+
+
+class TriggerReason(StrEnum):
+    """Why ``SummonController`` decided Jarvis should engage (T-007).
+
+    A ``str`` enum so a value is both a typed member and its wire string. It
+    distinguishes the two initiation paths of the asymmetric dual-summon model
+    (DECISIONS.md 2026-06-15, "Asymmetric dual-summon"):
+
+    Members:
+        SUMMON: Path A — a wake word fired. Immediate, unconditional engagement.
+        INTERJECTION: Path B — a detected wall cleared the confidence floor and
+            the politeness gap with no resumed speech. A proactive offer.
+    """
+
+    SUMMON = "summon"
+    INTERJECTION = "interjection"
+
+
+@dataclass(frozen=True)
+class Interjection:
+    """A Path-B proactive offer that cleared every gate (T-007).
+
+    Frozen (T-007): the offer ``SummonController`` emits when a detected wall
+    survived the confidence floor, the politeness gap, the abort-on-resume check,
+    and the back-off de-dupe. It carries just enough for the orchestrator to act
+    and for the precision eval (T-010) to score a fire by category + confidence.
+
+    Fields:
+        category: the :class:`WallCategory` of the wall being offered help on
+            (never ``NONE`` — an interjection only exists for a real wall).
+        offer: the single spoken-style sentence Jarvis would say.
+        confidence: the wall's confidence in ``[0.0, 1.0]`` (already ``>=`` the
+            controller's interjection floor — surfaced so the eval can sweep it).
+    """
+
+    category: WallCategory
+    offer: str
+    confidence: float
+
+
+@dataclass(frozen=True)
+class EngagementHandoff:
+    """The boundary output crossing into the engaged half (T-007 shape; T-008 assembles).
+
+    The context package the engaged path (voice-integration-engineer's
+    ``EngagedResponder`` → ``VoiceOutput``) receives when Jarvis engages. Its
+    *shape* is frozen here so the seam is stable; the orchestrator (T-008) is what
+    actually *builds* it, because it owns the living summary and the rolling
+    window. ``SummonController`` does not — it emits a :class:`SummonDecision`,
+    and the orchestrator adds ``summary`` + ``recent_excerpt``.
+
+    Fields:
+        trigger_reason: the wire string for why Jarvis engaged —
+            ``"summon"`` (Path A) or ``"wall:<category>"`` (Path B), built from
+            the :class:`SummonDecision` (see :meth:`SummonDecision.handoff_reason`).
+        summary: ``LivingSummary.text`` at engage time (orchestrator-supplied).
+        recent_excerpt: the last few rendered transcript lines (orchestrator-supplied).
+        detail: free-form extra, e.g. the summon utterance text. Empty by default.
+    """
+
+    trigger_reason: str
+    summary: str
+    recent_excerpt: str
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class SummonDecision:
+    """What ``SummonController`` emits when Jarvis should engage (T-007).
+
+    Frozen (T-007): the *pure engagement decision* — which path fired and the
+    payload the orchestrator needs to finish the job. ``SummonController`` is a
+    decision machine, not a handoff assembler: it holds neither the living summary
+    nor the rolling window, so it cannot build the full
+    :class:`EngagementHandoff`. It returns this instead, and the orchestrator
+    (T-008) assembles the handoff (Path A) or dispatches the offer (Path B) from
+    it. This decision/handoff split is logged in DECISIONS.md.
+
+    Exactly one of the two paths is represented:
+
+    * **Path A — summon** (``reason is TriggerReason.SUMMON``): ``interjection``
+      is ``None``; ``detail`` carries the summon utterance text. The orchestrator
+      builds an :class:`EngagementHandoff` (adding summary + excerpt).
+    * **Path B — interjection** (``reason is TriggerReason.INTERJECTION``):
+      ``interjection`` carries the :class:`Interjection` offer; ``detail`` is empty.
+
+    Fields:
+        reason: the :class:`TriggerReason` — which path fired.
+        interjection: the :class:`Interjection` for a Path-B decision; ``None``
+            for a Path-A summon.
+        detail: free-form extra (the summon utterance text for Path A). Empty for
+            Path B.
+    """
+
+    reason: TriggerReason
+    interjection: Interjection | None = None
+    detail: str = ""
+
+    def handoff_reason(self) -> str:
+        """The ``EngagementHandoff.trigger_reason`` wire string for this decision.
+
+        ``"summon"`` for Path A; ``"wall:<category>"`` for Path B — the exact
+        ``trigger_reason`` convention the module map froze for
+        :class:`EngagementHandoff` (so the orchestrator doesn't re-derive it).
+        """
+        if self.reason is TriggerReason.SUMMON:
+            return TriggerReason.SUMMON.value
+        assert self.interjection is not None  # invariant: Path B carries an offer
+        return f"wall:{self.interjection.category.value}"
