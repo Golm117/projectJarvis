@@ -17,7 +17,20 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-16 (T-007 SummonController built → in `review`, awaiting qa-tuning)
+## Current state — 2026-06-16 (T-007 APPROVED + T-010 done → T-008 is all that's left in Phase 0)
+
+**Phase:** phase_0 — Foundations.
+
+**T-007 (SummonController) APPROVED by qa-tuning and T-010 (interjection-precision eval spec) DONE** (this session). **T-008 (orchestrator + end-to-end MOCK pipeline) is now the single remaining Phase 0 task** — once it's green, Phase 0 is complete. Suite **121 green**, ruff lint+format clean.
+
+- **T-007 — qa-tuning mandatory review: APPROVED → `done`.** All six review criteria pass (full verdict in `docs/qa/working-notes.md`): external-behavior tests only (24 tests assert the returned `SummonDecision`/`None` + the *real* injected gate's public predicates on the `SimulatedClock`, no private coupling); Path A unconditional immediacy; Path B drops on any of {¬is_wall, conf<floor, speech_resumed, ¬gap, back-off} with **abort checked before the gap** (a latched resume suppresses even a stale-elapsed gap); back-off de-dupes by `category::offer` and only a fire arms it; confidence floor constructor-injected, `[0,1]`-guarded, inclusive `>=` — the clean Phase-5 sweep seam. No defects; no bounce.
+- **T-010 — interjection-precision eval spec: `done`.** Full spec in `docs/qa/eval-plan.md` §"Interjection-precision eval spec (T-010)". **Fixture format:** a monotonic timeline of `utterance` / `speech_start` / `speech_end` entries + per-candidate ground truth (`wall`, `WallCategory`, `useful|false`, a `match_from/to` window) + a `config` block carrying `settle_seconds` / `politeness_gap_seconds` / `interjection_confidence_floor` (the knobs T-503 sweeps). **Precision = useful ÷ total Path-B fires**: only `SummonDecision`s with `reason==INTERJECTION` count; Path-A summons and `None` decisions (waited/aborted/backed-off) are excluded; a fire matches a candidate by time window and must be the right category to score "useful". Runs deterministically on the `SimulatedClock` + `FakeWallBackend` harness (and `ScriptedSource`/`AttentionLayer` once T-008 lands) — no audio, no model, no network. Includes 5 illustrative fixtures, no captured data (T-502 produces the real corpus).
+
+**→ T-008 is the last Phase 0 task.** It wires the six core modules + `ScriptedSource` + fakes, assembles the `EngagementHandoff` from the `SummonDecision` (the orchestrator owns the summary + window — see DECISIONS.md), and is where the `adapters/` package likely lands. Once it runs a scripted conversation green (summary updates + ≥1 correct interjection + a wake-word summon → handoff, no audio/network), **Phase 0 is complete.**
+
+---
+
+## Prior state — 2026-06-16 (T-007 SummonController built → in `review`, awaiting qa-tuning)
 
 **Phase:** phase_0 — Foundations.
 

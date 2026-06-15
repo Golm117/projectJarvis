@@ -2,8 +2,8 @@
 
 > **Owner:** qa-tuning · **Domain:** `docs/qa/`
 > **Status:** living deliverable. The **test-harness conventions** section
-> below landed with T-009. The **interjection-precision eval spec** is
-> **T-010** (stubbed here, written next).
+> below landed with T-009; the **interjection-precision eval spec** below
+> landed with T-010 (fixture format + precision computation + run model).
 > Grounded in `.pdr.md` (§Success metric) and
 > `docs/architecture/module-map.md` (the seam contract).
 
@@ -136,55 +136,238 @@ When a real type lands, repoint the helper/import; call sites don't change.
 
 ---
 
-## Interjection-precision eval spec (T-010 — stub, written next)
+## Interjection-precision eval spec (T-010)
 
-> **This section is intentionally a stub.** The full spec — the labeled-
-> conversation **fixture format** and the **precision computation** — is task
-> **T-010** (`Depends on: T-007`), to be written immediately after this. It is
-> *not* fully specified here.
+> **Status:** written with T-010 (`Depends on: T-007`, now done). This is the
+> full spec — the labeled-conversation **fixture format** and the **precision
+> computation** — that Phase-5 calibration (T-503) runs against. No live data is
+> needed yet; the schema is designed now so capture-and-label tooling (T-502) and
+> the calibration sweep (T-503) target a stable shape. The end-to-end pipeline it
+> runs through is `AttentionLayer` (T-008), still to be built — until then the
+> spec is exercisable in the small against the modules directly (see
+> §"How it runs").
 
-What T-010 will define (placeholders, not commitments):
+### Why precision, and what counts as a fire
 
-* **The metric.** Interjection precision = of the interjections Jarvis fires,
-  the share that land at a genuinely useful, well-timed moment. Starting target
-  **≥ 70% useful, with false interjections rare** (`.pdr.md` §Success metric).
-  Precision (not recall) is the yardstick — a false interjection (talking over
-  people) is the costly error; a missed one is cheap.
-* **The fixture format.** A schema for labeled conversations: a sequence of
-  utterances with timing, plus per-moment ground-truth labels marking where an
-  interjection *would* be useful/well-timed vs. where firing would be a false
-  positive. No live data needed yet (Phase 0); real captured conversations
-  arrive in Phase 5 (T-502).
-* **The computation.** How a run's emitted interjections are scored against the
-  labels (true/false interjections → precision), driven through the
-  `AttentionLayer` on `ScriptedSource` + the fakes above, on the simulated clock
-  so timing is deterministic.
-* **Calibration hook.** The eval is the harness Phase 5 (T-503) uses to tune the
-  politeness-gap and `WALL_CONFIDENCE_TO_SPEAK` threshold against this metric.
+Interjection precision is the project's success metric (`.pdr.md` §Success
+metric):
 
-This stub will be replaced by the full spec under T-010.
+> **precision = useful interjections ÷ total interjections fired**
 
-### What T-010 must measure from WallDetector + TurnTakingGate (recorded during the T-005/T-006 review, 2026-06-15)
+A *false* interjection — Jarvis talking over people or offering noise — is the
+costly error; a *missed* one is cheap (the user can always summon). So precision,
+not recall, is the yardstick. **Starting target: ≥ 70 % of fired interjections
+useful/well-timed, with false interjections rare.** This is a starting line to be
+tuned on captured conversations, not a fixed pass bar.
 
-The full precision eval (T-010) and the end-to-end pipeline (T-008) **don't exist
-yet**, so no numeric interjection-precision impact can be stated for these two
-modules now. They were reviewed for **behavioral soundness and testability** only
-(both passed — see `working-notes.md`). What the T-010 eval will need to measure
-from each, so the fixture schema is designed for it up front:
+**A "fire" is a Path-B interjection only.** Precision is measured over the
+proactive offers `SummonController.consider_interjection(...)` emits — i.e. the
+`SummonDecision`s with `reason == INTERJECTION`. **Path-A summons are excluded
+entirely**: a summon is invited (the user said the wake word), so it is never a
+precision error and never enters the numerator or denominator. The eval ignores
+every `SummonDecision` whose `reason is TriggerReason.SUMMON` (and never calls
+`on_summon` itself). Concretely the denominator counts only `INTERJECTION`
+decisions; `None` returns from `consider_interjection` (waited / aborted / backed
+off / sub-threshold) are *not* fires and never counted.
 
-* **From `WallDetector` (the *what*):** the `category` and `confidence` of every
-  fired `WallVerdict`. A true vs. false interjection is scored per category, and
-  `confidence` is the variable Phase-5 sweeps against `WALL_CONFIDENCE_TO_SPEAK`.
-  ⇒ The fixture schema must label, **per moment**, both *whether* a wall exists
-  **and which `WallCategory`** — so a right-category and a wrong-category fire can
-  be scored distinctly.
-* **From `TurnTakingGate` (the *when*):** `politeness_gap_elapsed` (did the ~2 s
-  opening actually arrive) and `speech_resumed` (was the fire aborted). A false
-  interjection in the metric is exactly a fire into a thinking-pause or just
-  before speech resumes. ⇒ The fixture schema must carry **speech/silence boundary
-  timestamps** fine enough to place a resume relative to the gap — not just
-  utterance text.
-* **Net fixture requirement:** per-moment (wall-category + useful/false ground
-  truth) **and** speech/silence boundary timing. Both modules already expose
-  exactly these signals through their public API; nothing in either blocks the
-  eval.
+### The fixture format — labeled conversations
+
+A fixture is one labeled conversation: an ordered list of **moments** on a single
+monotonic timeline (seconds), each moment being either an utterance or a
+speech/silence boundary event, plus a ground-truth label wherever an interjection
+*could* be evaluated. The schema carries exactly the two things the metric
+consumes (recorded during the T-005/T-006 review, below): **(a)** per-candidate
+wall-category + useful/false ground truth, and **(b)** speech/silence boundary
+timing fine enough to place a resume relative to the politeness gap.
+
+Top-level shape (JSON/YAML; illustrative field names):
+
+```yaml
+fixture_id: "ff-001-unanswered-question"
+description: "Two speakers; B asks a question A never answers, then a clean pause."
+# Asymmetric-summon defaults the fixture was authored against. The eval injects
+# these into the gate/controller so the labels and the timing line up. Phase-5
+# (T-503) sweeps these and re-scores the SAME fixtures.
+config:
+  settle_seconds: 0.6
+  politeness_gap_seconds: 2.0
+  interjection_confidence_floor: 0.70
+
+# The conversation, as a flat timeline. Every entry has a `t` (seconds, monotonic,
+# non-decreasing). Three kinds:
+#   - utterance:     a transcribed line (feeds RollingWindow + WallDetector)
+#   - speech_start:  VAD onset  -> gate.on_speech_start()
+#   - speech_end:    VAD offset -> gate.on_speech_end()  (a silence opens here)
+timeline:
+  - { t: 0.0,  kind: speech_start }
+  - { t: 0.0,  kind: utterance, speaker: "B", text: "What was the name of that API we used last quarter?" }
+  - { t: 2.4,  kind: speech_end }          # B finishes; silence begins
+  # ... 2 s of silence elapses; this is a clean opening (no resume)
+
+# Ground-truth labels: one per CANDIDATE interjection moment. A candidate is a
+# point in the timeline where a wall plausibly exists and the eval should check
+# what the controller does. Each label is anchored to a time window and carries
+# the expected wall semantics + the useful/false verdict.
+candidates:
+  - candidate_id: "c1"
+    # The window (seconds) within which a fire is considered "at this moment".
+    # A fire whose decision time falls in [match_from, match_to] matches c1.
+    match_from: 2.4
+    match_to:   6.0
+    # Ground truth about the wall at this moment (what WallDetector SHOULD see):
+    wall: true
+    category: "unanswered_question"     # a WallCategory wire string, or null if wall:false
+    # The precision label: is an interjection HERE useful/well-timed, or false?
+    label: "useful"                     # "useful" | "false"
+    # Optional human note for why (kept for the calibration audit trail).
+    rationale: "B's question went unanswered; a clean 2 s opening followed."
+```
+
+Field reference:
+
+| Field | Meaning |
+|---|---|
+| `config` | The gate/controller thresholds the fixture was authored against. The eval injects them; T-503 overrides them to sweep, re-scoring the same fixtures. |
+| `timeline[].t` | Monotonic seconds. Drives the `SimulatedClock` — the eval advances the clock to each `t`. |
+| `timeline[].kind` | `utterance` \| `speech_start` \| `speech_end`. The two boundary kinds map 1:1 onto `gate.on_speech_start()` / `gate.on_speech_end()`; `utterance` feeds the window + detector. |
+| `candidates[].match_from/to` | The time window a fire must fall in to be attributed to this candidate (handles the politeness-gap delay between the wall and the fire). |
+| `candidates[].wall` / `category` | Ground truth: is there a wall here, and which `WallCategory`. Lets a right-category vs. wrong-category fire be scored distinctly. |
+| `candidates[].label` | `useful` (a fire here is correct) or `false` (a fire here is a precision error — a thinking-pause, an off-topic cue, or a moment speech was about to resume). |
+
+A fixture needs **no** captured audio or model output — it is the labeled
+*ground truth*. In Phase 0 fixtures are hand-authored (a few per wall category +
+the abort/back-off cases below). In Phase 5, T-502's capture-and-label tooling
+emits this same schema from real opt-in conversations.
+
+### Precision computation — matching fires to labels
+
+The eval replays a fixture's timeline through the modules (next section),
+collecting every Path-B **fire** (`INTERJECTION` decision) together with the
+clock time at which it was emitted. Each fire is then matched to a candidate and
+scored:
+
+1. **Match.** A fire at decision-time `t_fire` is attributed to the candidate
+   whose `[match_from, match_to]` contains `t_fire`. (Windows are authored
+   non-overlapping; if a fire falls in none, it is an **unmatched fire** —
+   counted as *false*, since the controller spoke where no candidate exists.)
+2. **Score the matched fire:**
+   * **useful (true positive)** iff the matched candidate has `label: useful`
+     **and** the fired `Interjection.category` equals the candidate's `category`
+     (right wall, right moment). A right-moment / wrong-category fire is scored
+     **false** — surfacing it as a precision error is deliberate, since the
+     offer would be about the wrong thing.
+   * **false (false positive)** otherwise — the candidate is `label: false`, or
+     it was an unmatched fire.
+3. **Aggregate.**
+
+   ```
+   precision = useful_fires / total_fires          # total_fires = useful + false
+   ```
+
+   over all fires across all fixtures (micro-average; a per-category breakdown is
+   also reported so calibration can see *which* wall types over-fire). If
+   `total_fires == 0`, precision is reported as `undefined` (not 0) — a run that
+   never interjects has no precision to speak of; that is a recall concern, out of
+   scope for this metric.
+
+What is **not** counted: Path-A summons (excluded as above); `None` decisions
+(waited/aborted/backed-off — these are the controller *correctly* staying
+silent, the opposite of a false fire); and `useful`-labeled candidates that the
+controller stayed silent on (a *miss* — a recall datum, recorded for visibility
+but never in the precision ratio).
+
+This makes the metric robust the way the design intends: the abort-on-resume and
+back-off behaviors (which produce `None`, not a fire) can only ever *help*
+precision — they remove would-be false fires from the denominator — and the
+confidence floor + politeness gap are exactly the knobs that move a borderline
+candidate between "fired (and scored)" and "stayed silent (uncounted)".
+
+### How it runs against the modules
+
+The eval is deterministic and offline — **no audio, no model, no network** — the
+same posture as the unit tests, on the same harness:
+
+* **Clock:** one `SimulatedClock` per fixture. The runner walks the `timeline`,
+  `clock.advance(...)`-ing to each entry's `t`, so every gate transition and
+  every fire happens at a known simulated time. No real `sleep`.
+* **Signals it reads, per module (all public API — nothing private):**
+  * **`TurnTakingGate` (the *when*):** fed the fixture's `speech_start` /
+    `speech_end` events via `on_speech_start()` / `on_speech_end()`; the runner
+    reads `politeness_gap_elapsed()` (did the opening arrive) and the controller
+    internally reads `speech_resumed()` (was the fire aborted). A false
+    interjection in the metric is precisely a fire into a thinking-pause or just
+    before speech resumes — the gate is what the controller consults to avoid it.
+  * **`WallDetector` (the *what*):** in Phase 0 the wall at each moment comes from
+    the fixture's labeled `wall`/`category` (or a `FakeWallBackend` scripted from
+    them) — *not* from running a model. The `category` and `confidence` of each
+    `WallVerdict` are what the controller gates on and what scoring compares to
+    the candidate. In Phase 2+ the real backend can be swapped in behind the same
+    seam to *also* measure detector precision, but the interjection-precision
+    metric itself only needs the labeled verdict.
+  * **`SummonController` (the *decision*):** the unit under measurement. The
+    runner calls `consider_interjection(verdict)` at each candidate's moments and
+    records every `INTERJECTION` `SummonDecision` (its `Interjection.category` /
+    `.offer` / `.confidence`) with the clock time — exactly the fields scoring
+    needs. `on_summon` is never called; Path-A is out of scope.
+* **Fakes:** `FakeWallBackend` (scripted from the fixture's labeled verdicts) and,
+  once T-008 lands, `ScriptedSource` + `FakeResponder` / `FakeVoice` so the whole
+  `AttentionLayer` can be driven end-to-end and the fires read off the dispatched
+  offers. Until T-008, the spec is exercisable directly against
+  `(TurnTakingGate, SummonController)` + scripted verdicts — the same way
+  `tests/test_summon_controller.py` already drives them.
+
+### Calibration hook (Phase 5, T-503)
+
+The eval is the harness T-503 uses to tune the two Path-B knobs against this
+metric: `politeness_gap_seconds` (TurnTakingGate) and
+`interjection_confidence_floor` (SummonController, default 0.70 — the prototype's
+`WALL_CONFIDENCE_TO_SPEAK`). T-503 holds the labeled fixtures fixed, sweeps these
+via the fixture `config` block, re-scores precision per setting, and picks the
+operating point that clears the ≥ 70 %-useful target with false interjections
+rare. Because both knobs are constructor-injected (verified in the T-006 and
+T-007 reviews), the sweep changes only the `config` block — no code edit.
+
+### Illustrative fixture set (schema examples — no captured data)
+
+A starter set covering each scored behavior. These are *schema illustrations*,
+not committed data; T-502 produces the real corpus.
+
+1. **`ff-useful-unanswered-question`** — B asks, A never answers, clean 2 s
+   opening. One candidate, `wall: true`, `category: unanswered_question`,
+   `label: useful`. Expect: one fire, matched, useful → precision 1.0.
+2. **`ff-false-thinking-pause`** — A pauses mid-thought (a factual_gap cue) but
+   resumes before the gap elapses: `speech_end` at t, `speech_start` at t+1.2
+   (< 2 s). Candidate `label: false`. Expect: the controller aborts on
+   `speech_resumed` → **`None`, no fire** → this would-be false positive is
+   correctly *removed* from the denominator (demonstrates abort improving
+   precision).
+3. **`ff-false-wrong-category`** — a real `stuck_point` wall, clean opening, but
+   the (hypothetical mis-firing) verdict carries `category: factual_gap`.
+   Candidate `label: useful`, `category: stuck_point`. Expect: a fire that
+   matches the moment but mismatches category → scored **false** (right moment,
+   wrong offer).
+4. **`ff-backoff-no-nag`** — the same wall surfaces twice across two openings.
+   Candidate 1 `label: useful`; candidate 2 marks the repeat. Expect: fire #1
+   useful, fire #2 suppressed by back-off → `None` → only one fire counted
+   (demonstrates back-off improving precision).
+5. **`ff-below-floor`** — a real wall but `confidence` 0.55 (< 0.70 floor),
+   clean opening. Candidate `wall: true`, `label: useful`. Expect: **no fire**
+   (sub-threshold) → a *miss* recorded (recall datum), precision unaffected. T-503
+   can lower the floor and re-score to see this become a fire.
+
+### What this measures from WallDetector + TurnTakingGate (recorded during the T-005/T-006 review, 2026-06-15)
+
+Both modules were reviewed for behavioral soundness and testability only (both
+passed — `working-notes.md`); the numeric impact is what this eval produces once
+fixtures + T-008 exist. The fixture schema above is designed against exactly the
+signals each module exposes:
+
+* **From `WallDetector` (the *what*):** `category` + `confidence` of every fired
+  `WallVerdict` — scored per category, and `confidence` is the variable T-503
+  sweeps against the floor. ⇒ schema labels per-candidate `wall` + `category`.
+* **From `TurnTakingGate` (the *when*):** `politeness_gap_elapsed` (opening
+  arrived) and `speech_resumed` (fire aborted). ⇒ schema carries `speech_start` /
+  `speech_end` boundary timing fine enough to place a resume relative to the gap.
+* **Net:** per-candidate (wall-category + useful/false) **and** speech/silence
+  boundary timing. Both modules expose exactly these through their public API;
+  nothing in either blocks the eval.

@@ -2,6 +2,29 @@
 
 _(scratchpad for in-flight thinking; promote durable findings to topic files)_
 
+## T-007 reviewed (APPROVED) + T-010 done (2026-06-16)
+
+- **T-007 SummonController — APPROVED** (mandatory review, success-metric-critical).
+  All six review criteria pass: external-behavior tests only (24 tests assert the
+  returned `SummonDecision`/`None` + the *real* injected gate's public predicates
+  on the `SimulatedClock`, no private coupling); Path A unconditional; Path B
+  drops on any of {¬is_wall, conf<floor, speech_resumed, ¬gap, back-off} with the
+  abort check correctly *before* the gap (`test_resume_suppresses_even_if_a_stale_
+  gap_reads_elapsed`); back-off de-dupes by `category::offer` and only a fire arms
+  it (`test_a_dropped_wall_does_not_arm_backoff`); floor injected + `[0,1]`-guarded
+  + inclusive `>=`. `_signature` reads `category.value` only after `is_wall` is
+  True (no NONE-category crash). Suite 121 green, ruff clean. `review → done`.
+- **T-010 interjection-precision eval spec — DONE.** Full spec promoted to
+  `eval-plan.md` §"Interjection-precision eval spec (T-010)": fixture format
+  (timeline of utterance/speech_start/speech_end + per-candidate
+  wall/category/useful|false labels + a `config` block of the three thresholds),
+  precision = useful÷total fires (Path-B `INTERJECTION` decisions only; Path-A
+  summons + `None` decisions excluded; match a fire to a candidate by time window,
+  right-category required for "useful"), deterministic run model on the
+  `SimulatedClock`+fakes harness, T-503 calibration hook, and 5 illustrative
+  fixtures (no captured data). No code added → suite stays 121 green, ruff clean.
+  **→ Only T-008 (orchestrator + end-to-end mock pipeline) remains in Phase 0.**
+
 ## T-009 done (2026-06-15) — harness landed
 
 Durable conventions promoted to `docs/qa/eval-plan.md` §"Test-harness
