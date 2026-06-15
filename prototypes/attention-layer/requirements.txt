@@ -1,0 +1,3 @@
+# Only needed for LIVE mode (Claude-backed summary + wall detection).
+# MOCK mode runs with the standard library alone — no install required.
+anthropic>=0.40
