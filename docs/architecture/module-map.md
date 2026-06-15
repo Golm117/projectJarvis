@@ -88,11 +88,11 @@ so the swappable backends actually swap:
 ## Data types (the things that cross seams)
 
 ```python
-@dataclass(frozen=True)
+@dataclass(frozen=True)        # FROZEN (T-002) — see jarvis/types.py
 class Utterance:
     speaker: str
     text: str
-    ts: float            # monotonic seconds (from the injected clock / VAD)
+    ts: float            # monotonic seconds, supplied by the producer (injected clock / VAD)
 
 @dataclass(frozen=True)
 class WallVerdict:        # what a WallBackend returns
@@ -115,25 +115,40 @@ class EngagementHandoff:  # THE boundary output (the seam to the engaged half)
     detail: str = ""      # e.g. the summon utterance
 ```
 
+`Utterance` is **frozen as of T-002** (`jarvis/types.py`): immutable, three fields,
+and `ts` is **required** — supplied by the producer (the injected clock or the VAD
+timeline), never defaulted from a hidden `time.monotonic()`. That keeps the "no
+hidden clock" constraint true all the way down to the data type and lets
+`RollingWindow` evict by elapsed time deterministically. sensing-engineer's
+`MicSource` must stamp `ts` from the VAD timeline when it builds an `Utterance`.
+
 `EngagementHandoff` is the two-way seam with voice-integration-engineer: I own its
 shape, they own whether it carries enough context. `WallVerdict` is the seam I
 freeze **with** local-ml-engineer before they build the real backend — my
-`WALL_CONFIDENCE_TO_SPEAK` gate reads *their* `confidence` field.
+`WALL_CONFIDENCE_TO_SPEAK` gate reads *their* `confidence` field. (`WallVerdict`,
+`Interjection`, `EngagementHandoff` are documented above but land in `types.py`
+with their own tasks — T-005 / T-007 / T-008 — so each freezes when its first real
+consumer does.)
 
 ---
 
 ## Module interfaces (the contract)
 
-### `RollingWindow` — bounded sliding transcript (T-002)
+### `RollingWindow` — bounded sliding transcript (T-002) · **done**
 Bounded by **both** `max_utterances` (count) and `max_seconds` (elapsed time);
-evicts stale utterances on every `add`. Takes an injected clock for the time
-bound.
+evicts stale utterances on every `add` **and on every read**, so the window ages
+even during silence. Takes the injected `now: Callable[[], float]` for the time
+bound — eviction is relative to *now*, not the newest utterance's `ts` (the
+deliberate divergence from the prototype).
 ```
+RollingWindow(max_utterances: int, max_seconds: float, now: Callable[[], float])
 add(u: Utterance) -> None
-utterances() -> list[Utterance]
-transcript() -> str
-keywords() -> set[str]
+utterances() -> list[Utterance]   # oldest-first; re-evicts against now()
+transcript() -> str               # "Speaker: text" lines
+keywords() -> set[str]            # union of content keywords (jarvis.core.text)
 ```
+The keyword extraction and Jaccard similarity live in `jarvis/core/text.py`
+(shared with `TopicShiftDetector`, T-003).
 
 ### `TopicShiftDetector` — the delta-update trigger (T-003)
 Pure function of current window content vs. the summary's basis content. Drives
@@ -246,9 +261,11 @@ ElevenLabs turns the mock pipeline into the live one with no change to the core.
 ```
 src/jarvis/
 ├── __init__.py            # version + package docstring  (T-001, done)
-├── types.py               # Utterance, WallVerdict, Interjection, EngagementHandoff  (T-002)
+├── types.py               # Utterance (FROZEN, T-002 done); WallVerdict/Interjection/EngagementHandoff land w/ their tasks
 ├── core/
-│   ├── rolling_window.py      # T-002
+│   ├── __init__.py            # core package docstring  (T-002, done)
+│   ├── text.py                # shared keywords()/jaccard() helpers  (T-002, done)
+│   ├── rolling_window.py      # T-002  ✅ done
 │   ├── topic_shift.py         # T-003
 │   ├── living_summary.py      # T-004
 │   ├── wall_detector.py       # T-005 (interface + mock backend)
@@ -261,9 +278,11 @@ src/jarvis/
 └── attention_layer.py     # orchestrator  (T-008)
 ```
 
-This layout is a proposal, not yet built — the modules land in their tasks. The
-seam names and signatures above are the part that other agents should treat as
-the contract; the file paths can move.
+The seam names and signatures above are the part other agents treat as the
+contract; the file paths can still move. **Landed so far (T-002):** `types.py`
+(`Utterance`), `core/text.py` (shared `keywords`/`jaccard`, ported from the
+prototype), and `core/rolling_window.py`. The remaining files land in their
+tasks.
 
 ---
 
