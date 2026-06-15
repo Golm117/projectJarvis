@@ -239,15 +239,18 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 - **Notes:** DONE (test infra, no separate reviewer). **Harness is ready for T-002 (RollingWindow — inject `clock.now`), T-003, T-005 (WallDetector — `FakeWallBackend`, `WallVerdictLike`), T-006 (TurnTakingGate — drive transitions via `clock.advance`), T-007/T-008.** Inject the clock as `now: Callable[[], float]` (pass `clock.now`) and seams via constructor. **Interface gaps for core-engineer to close:** (1) **T-006** — the module map freezes TurnTakingGate's three output predicates but NOT its event-*input* API nor a single pinned clock-injection signature (`now=` callable vs `Clock` object — both mentioned, neither chosen); pick one in T-006. (2) **T-005** — `WallVerdict` isn't frozen yet; harness uses `WallVerdictLike` (matching field names; TODO marker in `tests/fakes.py`), freeze the real type *with* local-ml-engineer and the swap is import-only.
 
 ### T-010 — Interjection-precision eval definition
-- **Status:** open
+- **Status:** claimed
 - **Priority:** P1
 - **Role:** qa-tuning
+- **Owner:** qa-tuning
 - **Phase:** 0
 - **Created:** 2026-06-15T00:00:00Z
+- **Claimed:** 2026-06-16T00:00:00Z
 - **Depends on:** T-007
 - **Description:** Define how the success metric is measured: a fixture format for labeled conversations and the precision computation (well-timed/useful interjections vs. false ones). No live data needed yet.
 - **Acceptance:** A written eval spec (`docs/qa/eval-plan.md`) plus a fixture schema that Phase 5 calibration will use.
 - **Progress:**
+  - 2026-06-16 — claimed (T-007 now done → dep cleared).
 - **Notes:** This is the yardstick the whole MVP is judged against.
 
 ---
