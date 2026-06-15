@@ -168,15 +168,35 @@ cold-start minimum (`MIN_UTTERANCES_FOR_SUMMARY`) and the "≥2 utterances since
 last update" debounce stay in `LivingSummary` (T-004) — they are *policy* about
 when to bother asking, not part of the shift metric itself.
 
-### `LivingSummary` — delta-updated summary (T-004)
+### `LivingSummary` — delta-updated summary (T-004) · **done**
 Holds the running summary; re-summarizes **only** on a detected shift, via the
-**injected** `SummarizerBackend`. No refresh below the cold-start minimum.
+**injected** `SummarizerBackend`. Holds a `TopicShiftDetector` (injectable;
+default-constructed) and tracks the basis keyword set the standing summary was
+built on. No refresh below the cold-start minimum.
 ```
+LivingSummary(backend: SummarizerBackend,
+              detector: TopicShiftDetector | None = None,
+              min_utterances: int = MIN_UTTERANCES_FOR_SUMMARY)
 consider_update(window: RollingWindow) -> bool   # True iff it refreshed
 text: str                                         # current summary
 ```
-Seam: `SummarizerBackend.summarize(transcript: str, prev: str) -> str`
-(mock = heuristic; local-ml = Qwen2.5/MLX).
+Seam (**frozen, T-004**): `SummarizerBackend.summarize(transcript: str, prev: str) -> str`
+— a `typing.Protocol` declared in `core/living_summary.py`; mock = heuristic,
+local-ml = Qwen2.5/MLX (T-202) drops in behind it untouched. The signature
+matches `tests/fakes.py::FakeSummarizer.summarize` **exactly** — reconciled at
+T-004, no disagreement found, so the test fake satisfies the protocol directly.
+
+**Two policy fences live here, not in `TopicShiftDetector`** (the detector is the
+pure metric): `MIN_UTTERANCES_FOR_SUMMARY` (cold-start: 3) and
+`MIN_UTTERANCES_SINCE_UPDATE` (debounce: ≥2 new utterances since the last refresh
+before a shift may re-trigger). Both are ported from the prototype and are module
+constants in `core/living_summary.py`. The first real summary fires as soon as the
+cold-start fence clears (even with no basis yet); after that, refresh only on a
+detected shift past the debounce. Note (T-004): a topic shift only registers once
+the old topic's utterances roll out of the `RollingWindow` (by count or time) — a
+large window holding both topics keeps the basis/current keyword overlap above
+threshold. This is correct "the conversation actually moved on" behavior, not a
+brief tangent; it's what `AttentionLayer` (T-008) wiring must size the window for.
 
 ### `WallDetector` — notices the conversation needs help (T-005) · **review-gated**
 Interface over a **swappable** `WallBackend`, plus a heuristic mock backend.
@@ -275,8 +295,8 @@ src/jarvis/
 │   ├── __init__.py            # core package docstring  (T-002, done)
 │   ├── text.py                # shared keywords()/jaccard() helpers  (T-002, done)
 │   ├── rolling_window.py      # T-002  ✅ done
-│   ├── topic_shift.py         # T-003
-│   ├── living_summary.py      # T-004
+│   ├── topic_shift.py         # T-003  ✅ done
+│   ├── living_summary.py      # T-004  ✅ done (+ SummarizerBackend Protocol)
 │   ├── wall_detector.py       # T-005 (interface + mock backend)
 │   ├── turn_taking_gate.py    # T-006
 │   └── summon_controller.py   # T-007
@@ -288,10 +308,15 @@ src/jarvis/
 ```
 
 The seam names and signatures above are the part other agents treat as the
-contract; the file paths can still move. **Landed so far (T-002):** `types.py`
-(`Utterance`), `core/text.py` (shared `keywords`/`jaccard`, ported from the
-prototype), and `core/rolling_window.py`. The remaining files land in their
-tasks.
+contract; the file paths can still move. **Landed so far (through T-004):**
+`types.py` (`Utterance`), `core/text.py` (shared `keywords`/`jaccard`, ported from
+the prototype), `core/rolling_window.py` (T-002), `core/topic_shift.py` (T-003),
+and `core/living_summary.py` (T-004, with the `SummarizerBackend` Protocol). The
+`SummarizerBackend` Protocol lives in `living_summary.py` rather than a shared
+`adapters/backends.py` for now (the `adapters/` package lands when T-008 wires the
+orchestrator and consolidates the seams); the signature is frozen regardless. The
+remaining core files (`wall_detector.py`, `turn_taking_gate.py`,
+`summon_controller.py`) land in their tasks.
 
 ---
 

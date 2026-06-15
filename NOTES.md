@@ -17,22 +17,40 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-15 (T-002 + T-003 done)
+## Current state — 2026-06-16 (T-002 + T-003 + T-004 done)
 
 **Phase:** phase_0 — Foundations.
 
-**T-002 (data types + RollingWindow) and T-003 (TopicShiftDetector) are DONE** (core-engineer, this session).
+**T-004 (LivingSummary delta-update) is DONE** (core-engineer, this session).
+- **`LivingSummary`** (`src/jarvis/core/living_summary.py`): holds an injected `TopicShiftDetector` + tracks the summary's basis keyword set; `consider_update(window) -> bool` re-summarizes **only** on a detected shift via the injected `SummarizerBackend`. `text` exposes the current summary.
+- **`SummarizerBackend` seam FROZEN** — `summarize(transcript: str, prev: str) -> str`, a `typing.Protocol` in `living_summary.py`. **Reconciled with `FakeSummarizer`: identical, no disagreement.** The real Qwen2.5/MLX backend (T-202) drops in behind it untouched. (Not yet hoisted to a shared `adapters/backends.py` — that consolidates at T-008.)
+- **Two policy fences live in LivingSummary, not TopicShiftDetector** (the deliberate scope split): `MIN_UTTERANCES_FOR_SUMMARY=3` (cold start) + `MIN_UTTERANCES_SINCE_UPDATE=2` (debounce). First summary fires when cold-start clears; after that, only on a shift past the debounce.
+- **Window-sizing gotcha for T-008:** a shift only registers once the *old* topic ages out of the `RollingWindow` (by count/time) — a wide window holding both topics keeps basis/current overlap above threshold. Correct "actually moved on" behavior; size the orchestrator's window for it. (The T-004 shift tests use a tight window to model the pivot.)
+- Tests on the T-009 harness (`SimulatedClock` + `RollingWindow` + `FakeSummarizer`). Suite **60 green**, ruff lint+format clean. Commits `[T-004]` claim + feat on `main`.
+
+### What's left in Phase 0 (after T-004)
+Five core tasks remain before the phase closes:
+- **T-005 (WallDetector)** — **mandatory qa-tuning review.** Open design item: freeze `WallVerdict` **with local-ml-engineer** first (harness uses `WallVerdictLike` until then; field names already match, swap is import-only).
+- **T-006 (TurnTakingGate)** — **mandatory qa-tuning review.** Open design item: the gate's event-*input* API is still undesigned (design it **with qa-tuning**); the clock side is settled (`now: Callable[[], float]`).
+- **T-007 (SummonController)** — **mandatory qa-tuning review.** Depends on T-005 + T-006.
+- **T-008 (AttentionLayer orchestrator + end-to-end MOCK run)** — depends on T-002..T-007. Where the `SummarizerBackend`/`WallBackend` seams + `ScriptedSource` + fakes get wired and the `adapters/` package likely lands.
+- **T-010 (interjection-precision eval)** — qa-tuning, depends on T-007.
+
+All three of T-005/T-006/T-007 carry mandatory qa-tuning review (they are the success-metric-critical timing/precision logic).
+
+---
+
+## Prior state — 2026-06-15 (T-002 + T-003 done)
+
+**Phase:** phase_0 — Foundations.
+
+**T-002 (data types + RollingWindow) and T-003 (TopicShiftDetector) are DONE** (core-engineer, prior session).
 - **Clock convention pinned:** `now: Callable[[], float]` is the single clock-injection form for every time-bounded module (module-map.md §"Cross-cutting design constraints" #1) — closes T-009 interface gap #1. Not a `Clock` object.
 - **`Utterance` is FROZEN** (`src/jarvis/types.py`): `speaker`, `text`, `ts`; `ts` required and producer-supplied (no hidden `time.monotonic` default). sensing-engineer's `MicSource` must stamp `ts` from the VAD timeline.
 - **`RollingWindow`** (`src/jarvis/core/rolling_window.py`): bounded by count AND elapsed time, injected `now`, evicts on add *and* on read so the window ages during silence (divergence from the prototype's internal clock + newest-ts eviction).
 - **Shared text helpers** (`src/jarvis/core/text.py`): `keywords()`/`jaccard()` ported from the prototype, reused by RollingWindow and TopicShiftDetector.
 - **`TopicShiftDetector`** (`src/jarvis/core/topic_shift.py`): pure decision, `shifted()` = Jaccard < `threshold` (default 0.30, constructor-injected). Cold-start minimum / debounce deliberately deferred to T-004's `LivingSummary` (scope fence in module-map.md).
-- Tests use the T-009 harness (`SimulatedClock`). Suite **48 green**, ruff lint+format clean. Commits: `[T-002]`/`[T-003]` claim + feat on `main`.
-
-### Next unblocked tasks
-- **T-004 (LivingSummary delta-update) is now UNBLOCKED** (depended on T-002 + T-003, both done). Wire: hold a `TopicShiftDetector`, inject a `SummarizerBackend` (use `FakeSummarizer`), apply `MIN_UTTERANCES_FOR_SUMMARY` + first-time rule around `shifted(window.keywords(), basis)`. Not a mandatory-review trigger.
-- **T-005 (WallDetector)** — open, depends only on T-001. **Mandatory qa-tuning review** (detector + thresholds). Freeze `WallVerdict` *with* local-ml-engineer first (harness uses `WallVerdictLike` until then).
-- **T-006 (TurnTakingGate)** — open, depends only on T-001. **Mandatory qa-tuning review.** Clock side now settled (`now` callable); the gate's event-*input* API is still T-006's gap to close (with qa-tuning).
+- Tests use the T-009 harness (`SimulatedClock`). Suite **48 green**, ruff lint+format clean. Commits: `[T-002]`/`[T-003]` claim + feat on `main`. (T-004 has since landed — see current state above for what's left in Phase 0.)
 
 ---
 
