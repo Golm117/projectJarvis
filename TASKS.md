@@ -193,15 +193,18 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 - **Notes:** **qa-tuning: APPROVED** — event-input API is harness-drivable and single-clock-source (events stamped from injected `now()`, no `ts` arg); asymmetric thresholds constructor-injected + guarded (`politeness_gap >= settle >= 0`), not magic; abort-on-resume verified correct (`test_resume_aborts_a_pending_politeness_gap`: a resume at t=1.9 re-arms and the new `on_speech_end` restarts the gap clock — a stale gap can never fire); predicates are pure reads (idempotent). Tests assert public predicates only over the `SimulatedClock`. Suite 97 green, ruff clean. Non-blocking coverage notes (double-`on_speech_start`, equal-thresholds boundary) recorded in `docs/qa/working-notes.md`. **Event-input API + thresholds documented in module-map.md + DECISIONS.md. T-005 + T-006 both approved → T-007 (SummonController) is UNBLOCKED.**
 
 ### T-007 — SummonController dual-path state machine (with tests)
-- **Status:** open
+- **Status:** claimed
 - **Priority:** P0
 - **Role:** core-engineer
+- **Owner:** core-engineer
 - **Phase:** 0
 - **Created:** 2026-06-15T00:00:00Z
+- **Claimed:** 2026-06-15T00:00:00Z
 - **Depends on:** T-005, T-006
 - **Description:** Implement the asymmetric dual-summon machine: Path A (wake word) fires immediately; Path B (interjection) fires only on `wall ∧ confidence ≥ threshold ∧ politeness gap`, aborts on resumed speech, and backs off on a repeated identical offer.
 - **Acceptance:** Tests prove Path A immediacy, Path B all-conditions gating, abort-on-resume, and back-off — all on the simulated clock.
 - **Progress:**
+  - 2026-06-15 — claimed.
 - **Notes:** Mandatory review by qa-tuning before merge (it carries the success metric).
 
 ### T-008 — AttentionLayer orchestrator + end-to-end MOCK run
