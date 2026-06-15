@@ -210,16 +210,19 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 - **Notes:** **qa-tuning: approved — pure decision machine; Path A unconditional, Path B gates on all five conditions with abort-before-gap precedence, back-off de-dupes by category::offer and only a fire arms it, confidence floor injected + [0,1]-guarded + inclusive; 24 tests assert only the returned SummonDecision/None and the real injected gate's public predicates over the SimulatedClock (no internal coupling). Suite 121 green, ruff clean.** _(prior review brief retained below.)_ **→ qa-tuning: MANDATORY REVIEW** (carries the success metric). What changed + what to check: (1) **Path A immediacy** — `on_summon` ignores gate/wall/floor/back-off, always returns `SUMMON`. (2) **Path B all-conditions gating** — `consider_interjection` returns a decision only if `is_wall ∧ confidence ≥ floor ∧ ¬speech_resumed ∧ politeness_gap_elapsed ∧ not-already-offered`, else `None`; covers the drop-if-any-one-fails matrix. (3) **abort-on-resume** checked *before* the gap (a latched resume suppresses even a stale-elapsed gap). (4) **back-off** by `category::offer` (confidence excluded; only a fire arms it; "twice in a row" semantics tested). (5) **confidence-floor boundary** — `>=` inclusive; just-below drops; floor configurable + range-guarded. **Threshold chosen: `interjection_confidence_floor=0.70`** (matches the prototype's `WALL_CONFIDENCE_TO_SPEAK`; kept in SummonController, not the detector). **Decision/handoff boundary:** controller emits a `SummonDecision`, the orchestrator (T-008) assembles the `EngagementHandoff` — see module-map §SummonController + DECISIONS.md. Coverage notes qa-tuning recorded for T-007 (`docs/qa/working-notes.md`): multi-cue priority + confidence-ordering are detector-level (untouched here); the gate's politeness-gap/resume timings are exercised through the injected real gate.
 
 ### T-008 — AttentionLayer orchestrator + end-to-end MOCK run
-- **Status:** open
+- **Status:** claimed
 - **Priority:** P0
 - **Role:** core-engineer
+- **Owner:** core-engineer
 - **Phase:** 0
 - **Created:** 2026-06-15T00:00:00Z
+- **Claimed:** 2026-06-16T00:30:00Z
 - **Depends on:** T-002, T-003, T-004, T-005, T-006, T-007
 - **Description:** Wire the core modules into `AttentionLayer` with `ScriptedSource` and fake responder/voice so a scripted conversation runs end-to-end in mock mode. Formalizes the prototype's behavior in the real package.
 - **Acceptance:** A scripted conversation produces summary updates, at least one correct interjection, and a wake-word summon → EngagementHandoff, all without audio or network.
 - **Progress:**
-- **Notes:**
+  - 2026-06-16T00:30Z — claimed.
+- **Notes:** Final Phase 0 task. NOT a mandatory-review trigger (wires existing modules; does not change gate/summon/wall internals) → goes to `done`.
 
 ### T-009 — Test harness: simulated clock + fakes
 - **Status:** done
