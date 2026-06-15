@@ -163,3 +163,28 @@ What T-010 will define (placeholders, not commitments):
   politeness-gap and `WALL_CONFIDENCE_TO_SPEAK` threshold against this metric.
 
 This stub will be replaced by the full spec under T-010.
+
+### What T-010 must measure from WallDetector + TurnTakingGate (recorded during the T-005/T-006 review, 2026-06-15)
+
+The full precision eval (T-010) and the end-to-end pipeline (T-008) **don't exist
+yet**, so no numeric interjection-precision impact can be stated for these two
+modules now. They were reviewed for **behavioral soundness and testability** only
+(both passed — see `working-notes.md`). What the T-010 eval will need to measure
+from each, so the fixture schema is designed for it up front:
+
+* **From `WallDetector` (the *what*):** the `category` and `confidence` of every
+  fired `WallVerdict`. A true vs. false interjection is scored per category, and
+  `confidence` is the variable Phase-5 sweeps against `WALL_CONFIDENCE_TO_SPEAK`.
+  ⇒ The fixture schema must label, **per moment**, both *whether* a wall exists
+  **and which `WallCategory`** — so a right-category and a wrong-category fire can
+  be scored distinctly.
+* **From `TurnTakingGate` (the *when*):** `politeness_gap_elapsed` (did the ~2 s
+  opening actually arrive) and `speech_resumed` (was the fire aborted). A false
+  interjection in the metric is exactly a fire into a thinking-pause or just
+  before speech resumes. ⇒ The fixture schema must carry **speech/silence boundary
+  timestamps** fine enough to place a resume relative to the gap — not just
+  utterance text.
+* **Net fixture requirement:** per-moment (wall-category + useful/false ground
+  truth) **and** speech/silence boundary timing. Both modules already expose
+  exactly these signals through their public API; nothing in either blocks the
+  eval.

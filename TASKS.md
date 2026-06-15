@@ -159,36 +159,38 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 - **Notes:** DONE (not a mandatory-review trigger). **Seam reconciliation:** `SummarizerBackend.summarize(transcript, prev) -> str` matches `FakeSummarizer` exactly — no disagreement; declared as a `typing.Protocol` in `living_summary.py` (not yet a shared `adapters/backends.py` — that consolidates at T-008). The real Qwen2.5/MLX backend (T-202) drops in behind it untouched. **Window-sizing note for T-008:** a topic shift only registers once the old topic's utterances roll out of the `RollingWindow` (by count/time); a wide window holding both topics keeps overlap above threshold. Size the window in the orchestrator accordingly. **T-004 done → T-008 (orchestrator) is one step closer; its remaining deps are T-005, T-006, T-007.**
 
 ### T-005 — WallDetector interface + mock backend (with tests)
-- **Status:** review
+- **Status:** done
 - **Priority:** P0
 - **Role:** core-engineer
 - **Owner:** core-engineer
 - **Phase:** 0
 - **Created:** 2026-06-15T00:00:00Z
 - **Claimed:** 2026-06-15T00:00:00Z
+- **Completed:** 2026-06-15T00:00:00Z
 - **Depends on:** T-001
 - **Description:** Define `WallDetector` returning `{ is_wall, category, confidence, offer }` over a swappable backend, and ship the heuristic mock backend.
 - **Acceptance:** Tests cover each category (`unanswered_question`, `factual_gap`, `stuck_point`, `explicit_ask`) and `none`, with confidence surfaced, via a fake/mock backend.
 - **Progress:**
   - 2026-06-15 — claimed; froze `WallVerdict` + `WallCategory` (StrEnum) in `jarvis/types.py`.
   - 2026-06-15 — shipped `core/wall_detector.py` (`WallDetector` over the frozen `WallBackend` Protocol seam + `HeuristicWallBackend` Phase-0 backend). Resolved the T-009 `WallVerdictLike` TODO in `tests/fakes.py` (now returns the real `WallVerdict`; `wall()`/`no_wall()` build real verdicts). 21 new tests in `test_wall_detector.py`. Suite 81 green, ruff clean.
-- **Notes:** **AWAITING qa-tuning REVIEW** (mandatory: WallDetector + thresholds). Completed-pending. **`WallVerdict` is FROZEN** — `is_wall: bool`, `category: WallCategory` (enum), `confidence: float [0,1]`, `offer: str`; `WallVerdict.none()` for the non-wall case. Real-backend contract note for local-ml-engineer (T-203) is in `module-map.md` §"Contract for the real backend". **Detector applies NO confidence threshold — the speak gate is SummonController policy (T-007).** Real backend (Qwen2.5/MLX, T-203) drops in behind the same seam.
+- **Notes:** **qa-tuning: APPROVED** — verdict schema sound + complete for the downstream gate/summon, speak-threshold correctly kept out of the detector (it's SummonController policy), tests assert external behavior over the FakeWallBackend, all four wall categories + `none` covered, faithful prototype port (adds the `stuck_point` cue the mock had omitted). Suite 97 green, ruff clean. Non-blocking coverage notes (multi-cue priority matrix, confidence-ordering) recorded in `docs/qa/working-notes.md` for T-007/T-010. **`WallVerdict` is FROZEN** — `is_wall`, `category` (enum, `NONE` iff `is_wall` False), `confidence [0,1]` raw, `offer`; `WallVerdict.none()`. Real-backend contract note for local-ml-engineer (T-203) is in `module-map.md` §"Contract for the real backend". **Detector applies NO confidence threshold — the speak gate is SummonController policy (T-007).**
 
 ### T-006 — TurnTakingGate on a simulated clock (with tests)
-- **Status:** review
+- **Status:** done
 - **Priority:** P0
 - **Role:** core-engineer
 - **Owner:** core-engineer
 - **Phase:** 0
 - **Created:** 2026-06-15T00:00:00Z
 - **Claimed:** 2026-06-15T00:00:00Z
+- **Completed:** 2026-06-15T00:00:00Z
 - **Depends on:** T-001
 - **Description:** Implement the endpoint/gap/abort timing logic — `settled?`, `politeness_gap_elapsed?`, `speech_resumed?` — driven by injected VAD/clock events (no real audio).
 - **Acceptance:** Tests drive a simulated clock through settle, politeness-gap-elapsed, and speech-resumed transitions deterministically.
 - **Progress:**
   - 2026-06-15 — claimed; designed the event-input API (`on_speech_start()`/`on_speech_end()` edge events on the injected clock).
   - 2026-06-15 — shipped `core/turn_taking_gate.py` (`TurnTakingGate`: edge events + the 3 frozen predicates, asymmetric `settle_seconds`/`politeness_gap_seconds` thresholds injected, no internal `time.monotonic()`). 16 new tests in `test_turn_taking_gate.py` driving `SimulatedClock` through settle → politeness-gap → resume(abort). Suite 97 green, ruff clean. DECISIONS.md entry for the event-input API.
-- **Notes:** **AWAITING qa-tuning REVIEW** (mandatory: TurnTakingGate timing). Completed-pending. **Event-input API:** `on_speech_start()` / `on_speech_end()` (edge events; no `ts` arg — gate stamps from injected `now()`); silence measured from the most recent `on_speech_end()`; `speech_resumed()` latches on a resume that interrupts a gap, clears on next `on_speech_end()`; predicates are pure reads. Thresholds: `settle_seconds=0.6` (Path A), `politeness_gap_seconds=2.0` (Path B), constructor-injected (the asymmetry). Documented in module-map.md + DECISIONS.md. **T-005 + T-006 now in review → T-007 (SummonController) unblocks once both pass review.**
+- **Notes:** **qa-tuning: APPROVED** — event-input API is harness-drivable and single-clock-source (events stamped from injected `now()`, no `ts` arg); asymmetric thresholds constructor-injected + guarded (`politeness_gap >= settle >= 0`), not magic; abort-on-resume verified correct (`test_resume_aborts_a_pending_politeness_gap`: a resume at t=1.9 re-arms and the new `on_speech_end` restarts the gap clock — a stale gap can never fire); predicates are pure reads (idempotent). Tests assert public predicates only over the `SimulatedClock`. Suite 97 green, ruff clean. Non-blocking coverage notes (double-`on_speech_start`, equal-thresholds boundary) recorded in `docs/qa/working-notes.md`. **Event-input API + thresholds documented in module-map.md + DECISIONS.md. T-005 + T-006 both approved → T-007 (SummonController) is UNBLOCKED.**
 
 ### T-007 — SummonController dual-path state machine (with tests)
 - **Status:** open

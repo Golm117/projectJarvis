@@ -26,5 +26,109 @@ green (24 total), ruff clean.
 
 - **T-010** — interjection-precision eval spec (fixture format + precision
   computation). Stub section already in `eval-plan.md`. Depends on T-007.
-- Mandatory review of T-005 (WallDetector), T-006 (TurnTakingGate),
-  T-007 (SummonController) before merge.
+- Mandatory review of ~~T-005 (WallDetector)~~ (approved, below),
+  ~~T-006 (TurnTakingGate)~~ (approved, below), T-007 (SummonController)
+  before merge.
+
+## T-005 + T-006 review (2026-06-15) — APPROVED both
+
+Mandatory qa-tuning review of core-engineer's WallDetector (T-005) and
+TurnTakingGate (T-006), both placed in `review`. Verdict: **both pass**.
+Suite **97 green**, ruff clean (ran locally).
+
+### T-005 WallDetector — PASS
+
+- **Tests assert external behavior, not internals.** Every assertion is on the
+  returned `WallVerdict` or on `backend.transcripts` / `.summaries` / `.call_count`
+  (what crossed the seam). No reach into `_backend`. Detector tests are driven by
+  the `FakeWallBackend` (scripted verdicts), heuristic tests by the real backend
+  over one-line transcripts — deterministic, no clock needed (the detector is
+  time-independent, correctly).
+- **WallVerdict schema is sound + complete for downstream.** `is_wall` /
+  `category` (`NONE` iff `is_wall` False) / `confidence` [0,1] raw / `offer`. The
+  `WallVerdict.none()` constructor pins the canonical non-wall result. The
+  real-backend contract note (module-map §"Contract for the real backend (T-203)")
+  is unambiguous and actionable for local-ml-engineer: return the dataclass not a
+  dict, `category` coerces from the wire string, confidence raw, offer empty for
+  non-wall, and the prototype JSON maps 1:1.
+- **Speak-threshold correctly kept OUT of the detector.** `test_detector_does_not
+  _apply_a_confidence_threshold` proves a 0.10 wall is still surfaced as a wall —
+  the `WALL_CONFIDENCE_TO_SPEAK=0.70` cut is SummonController policy (T-007).
+  Confirmed against the prototype: there the threshold lives in `should_speak`
+  (attention_layer.py:418), the SummonController analog — not in `detect_wall`.
+- **Faithful port + correct extension.** The heuristic mirrors the prototype's
+  `_mock_detect_wall` cues/confidences and *adds* the `stuck_point` cue, which the
+  prototype's mock omitted even though its JSON schema listed the category. Now all
+  four wall categories are reachable from the Phase-0 backend.
+- **Hard-nos honored:** no persistence, no cloud — pure regex over the passed-in
+  transcript; the `summary` arg is accepted but unused by the heuristic (the real
+  backend will use it).
+
+### T-006 TurnTakingGate — PASS
+
+- **Tests assert external behavior, not internals.** Every assertion is on a
+  public predicate (`settled` / `politeness_gap_elapsed` / `speech_resumed`) after
+  feeding edge events + advancing the `SimulatedClock`. No reach into `_silence_since`
+  / `_resumed`. `test_predicates_do_not_mutate_state` pins the pure-read contract.
+- **Single clock source, harness-drivable.** Time comes only from injected `now`;
+  events carry no `ts` (gate stamps from `now()` at delivery). `SimulatedClock`
+  drives every transition. Asymmetric thresholds (`settle_seconds=0.6` /
+  `politeness_gap_seconds=2.0`) are constructor-injected, not magic, and guarded
+  (`politeness_gap >= settle >= 0`), so Phase-5 calibration has one knob each.
+- **abort-on-resume is correct — the load-bearing behavior.**
+  `test_resume_aborts_a_pending_politeness_gap` proves a resume at t=1.9 (just
+  before the 2.0 gap) does NOT let the stale gap fire: `on_speech_start` re-arms
+  (silence predicates → False), and the *new* `on_speech_end` restarts the gap
+  clock from the fresh silence onset. `speech_resumed` latches on the
+  gap-interrupting resume and clears on the next `on_speech_end`. First onset
+  (no prior silence) is correctly NOT a resume.
+- **Hard-nos honored:** no persistence, no cloud, no audio — pure timing logic
+  over the injected clock.
+
+### Coverage gaps flagged (non-blocking — recorded for T-007/T-010, not bounced)
+
+These are *not* defects in T-005/T-006; they are behaviors the suites don't yet
+exercise and that the next consumer (SummonController, T-007) or the eval (T-010)
+must cover. None justify a bounce — the modules' own contracts are fully tested.
+
+1. **Gate: `on_speech_start` mid-speech (double-start, no intervening end).** No
+   test for two `on_speech_start()` in a row. Current behavior is benign
+   (idempotent: `_silence_since` already None, no spurious resume latch), but the
+   VAD adapter (Phase 3) could emit it — worth a one-line test so the contract is
+   pinned, not incidental.
+2. **Gate: `politeness_gap == settle` (equal thresholds).** The guard allows it
+   (`>=`), and both predicates would flip together. Untested boundary; harmless
+   but undocumented as intended.
+3. **Detector: heuristic confidence ordering is untested as a contract.** The four
+   confidences (0.72–0.80) are asserted only as "in [0,1]", not their relative
+   order. If T-010 ever leans on category→confidence ordering for precision, pin
+   it then.
+4. **Detector: multi-cue priority only partially covered.** Tests cover
+   explicit_ask > "?" and factual_gap > "?". The stuck_point-vs-question-mark and
+   explicit_ask-vs-factual_gap orderings aren't directly asserted. Low risk (the
+   regex priority chain is linear and obvious) but a full priority matrix would
+   harden it.
+
+### What T-010 (interjection-precision eval) will need to measure — recorded
+
+The precision eval can't produce a number yet (T-008 pipeline + T-010 don't exist).
+What it will need to instrument once they do, from these two modules:
+
+- **From WallDetector:** the `category` and `confidence` of each fired verdict.
+  Precision scoring must distinguish a *true* useful interjection from a false one
+  per category, and the confidence is the variable Phase-5 calibration sweeps
+  against `WALL_CONFIDENCE_TO_SPEAK`. The eval fixtures must therefore label, per
+  moment, both *whether* a wall exists and *which category* — so a right-category
+  / wrong-category fire can be scored differently if needed.
+- **From TurnTakingGate:** the two timings that gate a Path-B fire —
+  `politeness_gap_elapsed` (did the ~2 s opening actually arrive) and
+  `speech_resumed` (was it aborted). A "false interjection" in the precision
+  metric is precisely a fire where the gap fired but speech was about to resume,
+  or fired mid-thinking-pause. So the eval fixtures need utterance timing fine
+  enough to place a resume relative to the gap — i.e. the labeled-conversation
+  schema must carry speech/silence boundary timestamps, not just utterance text.
+- **Net:** T-010's fixture schema must carry (a) per-moment wall-category +
+  useful/false ground truth, and (b) speech/silence boundary timing. Both modules
+  expose exactly the signals the metric consumes; nothing in their API blocks the
+  eval. (No numeric precision-impact statement is possible at this stage — stated
+  honestly per the review gate.)
