@@ -67,8 +67,12 @@ so the swappable backends actually swap:
 
 1. **Injected clock, never a hidden one.** Anything time-dependent
    (`RollingWindow` eviction, `TurnTakingGate`) takes its time source via the
-   constructor (a `now: Callable[[], float]` or a `Clock` object). No
-   `time.monotonic()` buried inside. qa-tuning's simulated clock injects here.
+   constructor as **`now: Callable[[], float]`** — a zero-arg callable returning
+   monotonic seconds. No `time.monotonic()` buried inside. This is the **single
+   clock-injection convention** for every time-bounded module in this map (pinned
+   T-002, closing the T-009 ambiguity: a bare `now` callable, *not* a `Clock`
+   object). qa-tuning's `SimulatedClock` is injected by passing `clock.now`; the
+   clock instance is itself callable, so it also drops in directly where useful.
 2. **Injected backend, never an instantiated one.** `LivingSummary` takes a
    `SummarizerBackend`; `WallDetector` takes a `WallBackend`. The mock is the
    default reference; local-ml replaces it without touching the module.
