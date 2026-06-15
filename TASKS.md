@@ -192,15 +192,18 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 - **Notes:**
 
 ### T-009 — Test harness: simulated clock + fakes
-- **Status:** open
+- **Status:** claimed
 - **Priority:** P0
 - **Role:** qa-tuning
+- **Owner:** qa-tuning
 - **Phase:** 0
 - **Created:** 2026-06-15T00:00:00Z
+- **Claimed:** 2026-06-15T23:03:13Z
 - **Depends on:** T-001
 - **Description:** Build the reusable test scaffolding: a simulated clock utility and fakes (FakeSummarizer, FakeWallBackend, FakeResponder, FakeVoice) the core-module tests share.
 - **Acceptance:** Fakes and clock are reusable and documented; the core-module test tasks (T-002…T-008) build on them rather than reinventing.
 - **Progress:**
+  - 2026-06-15T23:03Z — claimed.
 - **Notes:** Coordinate interfaces with core-engineer so fakes match the real seams.
 
 ### T-010 — Interjection-precision eval definition
