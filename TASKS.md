@@ -125,15 +125,18 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 - **Notes:** DONE (not a mandatory-review trigger). **`Utterance` is FROZEN** — `speaker`, `text`, `ts` (required). sensing-engineer's `MicSource` must stamp `ts` from the VAD timeline. RollingWindow evicts relative to *now()* (not newest ts) and re-evicts on read, so it ages during silence — divergence from the prototype, documented in module-map.md. Shared text helpers in `jarvis/core/text.py` are ready for T-003 to reuse. **Unblocks T-004 (LivingSummary)** once T-003 also lands.
 
 ### T-003 — TopicShiftDetector (with tests)
-- **Status:** open
+- **Status:** claimed
 - **Priority:** P1
 - **Role:** core-engineer
+- **Owner:** core-engineer
 - **Phase:** 0
 - **Created:** 2026-06-15T00:00:00Z
+- **Claimed:** 2026-06-15T23:32:00Z
 - **Depends on:** T-001
 - **Description:** Implement the pure topic-shift decision used to gate summary refresh ("redraw only changed pixels").
 - **Acceptance:** Tests cover representative shift and no-shift cases through the public interface.
 - **Progress:**
+  - 2026-06-15T23:32Z — claimed.
 - **Notes:**
 
 ### T-004 — LivingSummary delta-update (with tests)
