@@ -91,11 +91,13 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 ## Active tasks
 
 ### T-001 — Python project scaffold
-- **Status:** open
+- **Status:** claimed
 - **Priority:** P0
 - **Role:** core-engineer
+- **Owner:** core-engineer
 - **Phase:** 0
 - **Created:** 2026-06-15T00:00:00Z
+- **Claimed:** 2026-06-15T22:55:20Z
 - **Depends on:** —
 - **Description:** Stand up the `jarvis` Python package (3.11+): package layout, dependency/venv management, pytest, and lint/format. Establish the home the core modules and adapters live in, distinct from `prototypes/`.
 - **Acceptance:** `pytest` runs (zero tests is fine); the package imports; lint/format configured and passing; a `.gitignore` covers Python artifacts, `.DS_Store`, and any audio/model caches.
