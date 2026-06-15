@@ -192,19 +192,21 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 - **Notes:**
 
 ### T-009 — Test harness: simulated clock + fakes
-- **Status:** claimed
+- **Status:** done
 - **Priority:** P0
 - **Role:** qa-tuning
 - **Owner:** qa-tuning
 - **Phase:** 0
 - **Created:** 2026-06-15T00:00:00Z
 - **Claimed:** 2026-06-15T23:03:13Z
+- **Completed:** 2026-06-15T23:07:03Z
 - **Depends on:** T-001
 - **Description:** Build the reusable test scaffolding: a simulated clock utility and fakes (FakeSummarizer, FakeWallBackend, FakeResponder, FakeVoice) the core-module tests share.
 - **Acceptance:** Fakes and clock are reusable and documented; the core-module test tasks (T-002…T-008) build on them rather than reinventing.
 - **Progress:**
   - 2026-06-15T23:03Z — claimed.
-- **Notes:** Coordinate interfaces with core-engineer so fakes match the real seams.
+  - 2026-06-15T23:07Z — shipped `tests/clock.py` (SimulatedClock), `tests/fakes.py` (FakeSummarizer/FakeWallBackend/FakeResponder/FakeVoice + WallVerdictLike + wall()/no_wall() helpers), `tests/conftest.py` fixtures, `tests/test_harness.py` (22 self-tests). Suite green (24), ruff clean. Conventions in `docs/qa/eval-plan.md`.
+- **Notes:** DONE (test infra, no separate reviewer). **Harness is ready for T-002 (RollingWindow — inject `clock.now`), T-003, T-005 (WallDetector — `FakeWallBackend`, `WallVerdictLike`), T-006 (TurnTakingGate — drive transitions via `clock.advance`), T-007/T-008.** Inject the clock as `now: Callable[[], float]` (pass `clock.now`) and seams via constructor. **Interface gaps for core-engineer to close:** (1) **T-006** — the module map freezes TurnTakingGate's three output predicates but NOT its event-*input* API nor a single pinned clock-injection signature (`now=` callable vs `Clock` object — both mentioned, neither chosen); pick one in T-006. (2) **T-005** — `WallVerdict` isn't frozen yet; harness uses `WallVerdictLike` (matching field names; TODO marker in `tests/fakes.py`), freeze the real type *with* local-ml-engineer and the swap is import-only.
 
 ### T-010 — Interjection-precision eval definition
 - **Status:** open

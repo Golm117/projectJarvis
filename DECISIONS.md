@@ -18,6 +18,15 @@ Keep entries short. One paragraph per field is plenty. If it takes more, it prob
 
 ---
 
+## 2026-06-15 — Test harness: shared simulated clock + seam fakes (T-009)
+
+**Decided by:** Claude Code (qa-tuning) — T-009
+**Status:** accepted
+**Context:** The six core modules (T-002…T-008) all need a deterministic time source and doubles for the swappable backend/adapter seams. Letting each test task reinvent these would drift — different clocks, different fake shapes — and risk tests pinned to internals that break when the real model/audio/voice backends swap in (Phases 1, 2, 4).
+**Decision:** One shared harness under `tests/`: `clock.py` (`SimulatedClock` — injected, monotonic-by-construction, driven with `advance`/`set`, no real `sleep`), `fakes.py` (`FakeSummarizer`, `FakeWallBackend`, `FakeResponder`, `FakeVoice` — each presets a return and records calls; plus a `WallVerdictLike` stand-in until T-005 freezes the real `WallVerdict`), `conftest.py` (fixtures), and `test_harness.py` (self-tests). The governing rule for all core-module tests: **assert on external behavior — return values, emitted events, seam calls — never on private fields.** Modules receive time as `now: Callable[[], float]` (pass `clock.now`) and seams via the constructor. Conventions documented in `docs/qa/eval-plan.md`.
+**Rationale:** Bind the test infra to the *work* (the seam contract in `module-map.md`), not to each task, so all six modules share one vocabulary and behavior-pinned tests survive the mock→real backend swaps the architecture is built to allow. The injected clock is the mechanism the module map's "no hidden `time.monotonic()`" constraint exists to enable.
+**Alternatives considered:** Per-task ad-hoc clocks/fakes (rejected — drift, duplication, no shared conventions). `freezegun`/`unittest.mock` time patching (rejected — patches a hidden global clock, which fights the injected-clock constraint and the "no I/O/hidden state in core" design; explicit injection is more honest and deterministic). `unittest.mock.Mock` for the seams (rejected for the default path — hand-written fakes give readable preset/record APIs and typed verdict helpers; `Mock` is available to tests that want it).
+
 ## 2026-06-15 — Phase 0 toolchain: uv + src-layout + pytest + ruff
 
 **Decided by:** Claude Code (core-engineer) — T-001 scaffold
