@@ -175,15 +175,18 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 - **Notes:** **AWAITING qa-tuning REVIEW** (mandatory: WallDetector + thresholds). Completed-pending. **`WallVerdict` is FROZEN** — `is_wall: bool`, `category: WallCategory` (enum), `confidence: float [0,1]`, `offer: str`; `WallVerdict.none()` for the non-wall case. Real-backend contract note for local-ml-engineer (T-203) is in `module-map.md` §"Contract for the real backend". **Detector applies NO confidence threshold — the speak gate is SummonController policy (T-007).** Real backend (Qwen2.5/MLX, T-203) drops in behind the same seam.
 
 ### T-006 — TurnTakingGate on a simulated clock (with tests)
-- **Status:** open
+- **Status:** claimed
 - **Priority:** P0
 - **Role:** core-engineer
+- **Owner:** core-engineer
 - **Phase:** 0
 - **Created:** 2026-06-15T00:00:00Z
+- **Claimed:** 2026-06-15T00:00:00Z
 - **Depends on:** T-001
 - **Description:** Implement the endpoint/gap/abort timing logic — `settled?`, `politeness_gap_elapsed?`, `speech_resumed?` — driven by injected VAD/clock events (no real audio).
 - **Acceptance:** Tests drive a simulated clock through settle, politeness-gap-elapsed, and speech-resumed transitions deterministically.
 - **Progress:**
+  - 2026-06-15 — claimed; designing the event-input API (the gap qa-tuning flagged) then implementing on the injected clock.
 - **Notes:** This is half of the success-metric-critical timing; qa-tuning is a mandatory reviewer.
 
 ### T-007 — SummonController dual-path state machine (with tests)
