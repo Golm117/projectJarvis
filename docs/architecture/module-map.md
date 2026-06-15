@@ -250,14 +250,33 @@ the prototype's `_mock_detect_wall` + a `stuck_point` cue so all four wall
 categories are reachable). Real backend (Qwen2.5/MLX, structured output) arrives
 Phase 2 (T-203) behind this interface — see "Contract for the real backend" above.
 
-### `TurnTakingGate` — endpoint / gap / abort timing (T-006) · **review-gated**
-Consumes VAD/clock events on an **injected clock**; reports the timing predicates
-the dual-summon machine needs. No real audio — fed simulated events in tests.
+### `TurnTakingGate` — endpoint / gap / abort timing (T-006) · **review-gated** · **done (pending qa-tuning review)**
+Consumes VAD speech/silence **boundary events** on an **injected clock**; reports
+the timing predicates the dual-summon machine needs. No real audio — fed simulated
+events in tests.
+
+**Event-input API (designed T-006 — the gap qa-tuning flagged):** the gate takes
+two edge events off the VAD timeline; time comes *only* from the injected `now`
+(events carry no timestamp — the gate stamps them from `now()` on delivery). The
+three predicates are **pure reads** of (state, now) — idempotent, no consume-on-read.
 ```
-settled() -> bool                  # endpoint reached
-politeness_gap_elapsed() -> bool   # ~2 s of quiet (Path B)
-speech_resumed() -> bool           # someone kept talking → abort
+TurnTakingGate(now: Callable[[], float],
+               settle_seconds: float = 0.6,            # short endpoint gap (Path A)
+               politeness_gap_seconds: float = 2.0)    # long politeness gap (Path B); must be >= settle
+# input (edge events; silence is measured from the most recent on_speech_end):
+on_speech_start() -> None          # VAD speech onset; re-arms; latches speech_resumed if it interrupts a gap
+on_speech_end()   -> None          # VAD speech offset; starts the silence/gap clock; clears the resume latch
+# output predicates:
+settled() -> bool                  # >= settle_seconds of silence (endpoint reached)
+politeness_gap_elapsed() -> bool   # >= politeness_gap_seconds of silence (Path B)
+speech_resumed() -> bool           # speech returned after a gap had opened → abort (latched until next on_speech_end)
 ```
+**Why edge events, not a per-frame `feed(is_speech)` poll:** the gate reasons about
+*durations of silence*, so it needs the two transition instants, not a level stream;
+an edge API has no threshold-crossing bookkeeping and maps 1:1 onto Silero VAD's
+segment callbacks in Phase 3 (T-301). The two thresholds are constructor-injected
+(the asymmetry from DECISIONS.md), so qa-tuning tunes them in one place (Phase 5).
+See DECISIONS.md 2026-06-15 "TurnTakingGate event-input API".
 
 ### `SummonController` — the asymmetric dual-path state machine (T-007) · **review-gated**
 The heart of the MVP. Turns gate + detector signals into either an
@@ -340,7 +359,7 @@ src/jarvis/
 │   ├── topic_shift.py         # T-003  ✅ done
 │   ├── living_summary.py      # T-004  ✅ done (+ SummarizerBackend Protocol)
 │   ├── wall_detector.py       # T-005  ✅ done (WallDetector + WallBackend Protocol + HeuristicWallBackend)
-│   ├── turn_taking_gate.py    # T-006
+│   ├── turn_taking_gate.py    # T-006  ✅ done (on_speech_start/end events + 3 predicates on injected clock)
 │   └── summon_controller.py   # T-007
 ├── adapters/
 │   ├── transcript_source.py   # TranscriptSource + ScriptedSource  (core)

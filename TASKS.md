@@ -175,7 +175,7 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 - **Notes:** **AWAITING qa-tuning REVIEW** (mandatory: WallDetector + thresholds). Completed-pending. **`WallVerdict` is FROZEN** — `is_wall: bool`, `category: WallCategory` (enum), `confidence: float [0,1]`, `offer: str`; `WallVerdict.none()` for the non-wall case. Real-backend contract note for local-ml-engineer (T-203) is in `module-map.md` §"Contract for the real backend". **Detector applies NO confidence threshold — the speak gate is SummonController policy (T-007).** Real backend (Qwen2.5/MLX, T-203) drops in behind the same seam.
 
 ### T-006 — TurnTakingGate on a simulated clock (with tests)
-- **Status:** claimed
+- **Status:** review
 - **Priority:** P0
 - **Role:** core-engineer
 - **Owner:** core-engineer
@@ -186,8 +186,9 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 - **Description:** Implement the endpoint/gap/abort timing logic — `settled?`, `politeness_gap_elapsed?`, `speech_resumed?` — driven by injected VAD/clock events (no real audio).
 - **Acceptance:** Tests drive a simulated clock through settle, politeness-gap-elapsed, and speech-resumed transitions deterministically.
 - **Progress:**
-  - 2026-06-15 — claimed; designing the event-input API (the gap qa-tuning flagged) then implementing on the injected clock.
-- **Notes:** This is half of the success-metric-critical timing; qa-tuning is a mandatory reviewer.
+  - 2026-06-15 — claimed; designed the event-input API (`on_speech_start()`/`on_speech_end()` edge events on the injected clock).
+  - 2026-06-15 — shipped `core/turn_taking_gate.py` (`TurnTakingGate`: edge events + the 3 frozen predicates, asymmetric `settle_seconds`/`politeness_gap_seconds` thresholds injected, no internal `time.monotonic()`). 16 new tests in `test_turn_taking_gate.py` driving `SimulatedClock` through settle → politeness-gap → resume(abort). Suite 97 green, ruff clean. DECISIONS.md entry for the event-input API.
+- **Notes:** **AWAITING qa-tuning REVIEW** (mandatory: TurnTakingGate timing). Completed-pending. **Event-input API:** `on_speech_start()` / `on_speech_end()` (edge events; no `ts` arg — gate stamps from injected `now()`); silence measured from the most recent `on_speech_end()`; `speech_resumed()` latches on a resume that interrupts a gap, clears on next `on_speech_end()`; predicates are pure reads. Thresholds: `settle_seconds=0.6` (Path A), `politeness_gap_seconds=2.0` (Path B), constructor-injected (the asymmetry). Documented in module-map.md + DECISIONS.md. **T-005 + T-006 now in review → T-007 (SummonController) unblocks once both pass review.**
 
 ### T-007 — SummonController dual-path state machine (with tests)
 - **Status:** open

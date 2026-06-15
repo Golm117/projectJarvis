@@ -18,6 +18,15 @@ Keep entries short. One paragraph per field is plenty. If it takes more, it prob
 
 ---
 
+## 2026-06-15 — TurnTakingGate event-input API: VAD boundary events on the injected clock (T-006)
+
+**Decided by:** Claude Code (core-engineer) — T-006
+**Status:** accepted
+**Context:** The module map froze `TurnTakingGate`'s three *output* predicates (`settled` / `politeness_gap_elapsed` / `speech_resumed`) but left the *input* side undesigned — how speech/silence boundaries are fed in — and qa-tuning (T-009) flagged it as the open interface gap to close in T-006. The clock side was already settled (`now: Callable[[], float]`).
+**Decision:** The gate consumes two **edge events** off the VAD timeline — `on_speech_start()` and `on_speech_end()` — and nothing else. The events carry **no timestamp argument**; the gate stamps them from the injected `now()` at delivery, keeping one clock source of truth. Silence is measured from the **most recent** `on_speech_end()`. `on_speech_start()` re-arms the gate (silence predicates fall back to `False`) and latches `speech_resumed()` `True` if it interrupted an already-open gap; the next `on_speech_end()` clears that latch. The three predicates are **pure reads** of (state, now) — idempotent, no consume-on-read. The two thresholds (`settle_seconds` ≈ 0.6, `politeness_gap_seconds` ≈ 2.0, the latter must be ≥ the former) are constructor-injected.
+**Rationale:** The gate reasons about *durations of silence*, so the two things it needs are the two transition instants — not a per-frame level stream. An edge API is smaller, has no threshold-crossing/debounce bookkeeping inside the gate, and maps 1:1 onto Silero VAD's segment callbacks in Phase 3 (a VAD segmenter emits exactly speech-start / speech-end). Timestamping from the single injected clock (rather than a `ts` arg per event) preserves the "no hidden clock / one clock convention" constraint and lets `SimulatedClock` drive every transition deterministically. Pure-read predicates let `SummonController` and tests poll freely.
+**Alternatives considered:** A per-frame `feed(is_speech: bool)` / `on_vad(level)` poll (rejected — pushes endpoint debouncing and frame-rate coupling into the gate; the gate would have to detect edges itself). A single `feed(event)` with an event enum (rejected — two named methods are clearer at call sites and for the VAD adapter to target; no real expressiveness lost). Passing an explicit `ts` with each event (rejected — a second clock source that could drift from `now()`; the gate already has the injected clock). Making the predicates consume-on-read / event-emitting (rejected — the module map's predicates are *queries*; `SummonController` needs to poll them across ticks without side effects).
+
 ## 2026-06-15 — Test harness: shared simulated clock + seam fakes (T-009)
 
 **Decided by:** Claude Code (qa-tuning) — T-009
