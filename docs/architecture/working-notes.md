@@ -19,6 +19,17 @@ required, no hidden default (producer stamps it). `RollingWindow`
 newest-ts eviction. Shared `keywords()`/`jaccard()` ported to
 `jarvis/core/text.py` (T-003 reuses them).
 
+## Done — T-003 (TopicShiftDetector)
+
+`jarvis/core/topic_shift.py` — `TopicShiftDetector(threshold=0.30)`, pure
+decision over two keyword sets: `shifted()` = Jaccard strictly below threshold;
+also `similarity()` to inspect drift and a read-only `threshold`. No hidden
+state. **Deliberately left out** the cold-start minimum and the ≥2-since-update
+debounce — those are `LivingSummary` policy (T-004), not part of the shift
+metric. T-004 wiring: `LivingSummary` holds the detector, calls
+`shifted(window.keywords(), self._basis_keywords)`, and applies
+`MIN_UTTERANCES_FOR_SUMMARY` + the first-time/cold-start rule around it.
+
 ## Still pending for later tasks
 
 - `WallVerdict` schema must be frozen *with* local-ml-engineer before T-005 — the

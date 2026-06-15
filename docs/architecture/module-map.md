@@ -150,14 +150,23 @@ keywords() -> set[str]            # union of content keywords (jarvis.core.text)
 The keyword extraction and Jaccard similarity live in `jarvis/core/text.py`
 (shared with `TopicShiftDetector`, T-003).
 
-### `TopicShiftDetector` — the delta-update trigger (T-003)
+### `TopicShiftDetector` — the delta-update trigger (T-003) · **done**
 Pure function of current window content vs. the summary's basis content. Drives
 "redraw only the changed pixels" — decides *when* a summary refresh is worth it.
+No hidden state; takes the two keyword sets, returns a boolean.
 ```
+TopicShiftDetector(threshold: float = 0.30)
 shifted(current_keywords: set[str], basis_keywords: set[str]) -> bool
+similarity(current_keywords: set[str], basis_keywords: set[str]) -> float  # inspect the drift
+threshold -> float   # read-only, the configured floor
 ```
-(Prototype uses Jaccard < `TOPIC_SHIFT_THRESHOLD`; the detector encapsulates that
-choice behind a boolean so the metric can change without touching callers.)
+Jaccard (`jarvis.core.text.jaccard`) strictly below `threshold` → shift. The
+metric is encapsulated behind the boolean so it can change (embedding distance,
+etc.) without touching callers; the threshold is constructor-injected so it tunes
+in one place. **Scope fence:** this is the pure shift decision only. The
+cold-start minimum (`MIN_UTTERANCES_FOR_SUMMARY`) and the "≥2 utterances since
+last update" debounce stay in `LivingSummary` (T-004) — they are *policy* about
+when to bother asking, not part of the shift metric itself.
 
 ### `LivingSummary` — delta-updated summary (T-004)
 Holds the running summary; re-summarizes **only** on a detected shift, via the

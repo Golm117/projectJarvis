@@ -125,19 +125,21 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 - **Notes:** DONE (not a mandatory-review trigger). **`Utterance` is FROZEN** — `speaker`, `text`, `ts` (required). sensing-engineer's `MicSource` must stamp `ts` from the VAD timeline. RollingWindow evicts relative to *now()* (not newest ts) and re-evicts on read, so it ages during silence — divergence from the prototype, documented in module-map.md. Shared text helpers in `jarvis/core/text.py` are ready for T-003 to reuse. **Unblocks T-004 (LivingSummary)** once T-003 also lands.
 
 ### T-003 — TopicShiftDetector (with tests)
-- **Status:** claimed
+- **Status:** done
 - **Priority:** P1
 - **Role:** core-engineer
 - **Owner:** core-engineer
 - **Phase:** 0
 - **Created:** 2026-06-15T00:00:00Z
 - **Claimed:** 2026-06-15T23:32:00Z
+- **Completed:** 2026-06-15T23:40:00Z
 - **Depends on:** T-001
 - **Description:** Implement the pure topic-shift decision used to gate summary refresh ("redraw only changed pixels").
 - **Acceptance:** Tests cover representative shift and no-shift cases through the public interface.
 - **Progress:**
   - 2026-06-15T23:32Z — claimed.
-- **Notes:**
+  - 2026-06-15T23:40Z — shipped `jarvis/core/topic_shift.py` (`TopicShiftDetector`: pure, no hidden state; Jaccard < threshold; constructor-injected `threshold`, default 0.30; `shifted`/`similarity`/`threshold` interface). `tests/test_topic_shift.py` (12 tests): representative shift + no-shift, strict-below boundary, empty-set edges (cold start, both-empty), configurability, range guard. Suite 48 green, ruff clean.
+- **Notes:** DONE (not a mandatory-review trigger). Pure decision over keyword sets — reuses `jarvis/core/text.jaccard`. **Scope fence:** cold-start minimum + the ≥2-since-update debounce belong to `LivingSummary` (T-004), NOT here. **T-002 + T-003 done → T-004 (LivingSummary) is now UNBLOCKED.**
 
 ### T-004 — LivingSummary delta-update (with tests)
 - **Status:** open
