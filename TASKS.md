@@ -159,7 +159,7 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 - **Notes:** DONE (not a mandatory-review trigger). **Seam reconciliation:** `SummarizerBackend.summarize(transcript, prev) -> str` matches `FakeSummarizer` exactly — no disagreement; declared as a `typing.Protocol` in `living_summary.py` (not yet a shared `adapters/backends.py` — that consolidates at T-008). The real Qwen2.5/MLX backend (T-202) drops in behind it untouched. **Window-sizing note for T-008:** a topic shift only registers once the old topic's utterances roll out of the `RollingWindow` (by count/time); a wide window holding both topics keeps overlap above threshold. Size the window in the orchestrator accordingly. **T-004 done → T-008 (orchestrator) is one step closer; its remaining deps are T-005, T-006, T-007.**
 
 ### T-005 — WallDetector interface + mock backend (with tests)
-- **Status:** claimed
+- **Status:** review
 - **Priority:** P0
 - **Role:** core-engineer
 - **Owner:** core-engineer
@@ -170,8 +170,9 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 - **Description:** Define `WallDetector` returning `{ is_wall, category, confidence, offer }` over a swappable backend, and ship the heuristic mock backend.
 - **Acceptance:** Tests cover each category (`unanswered_question`, `factual_gap`, `stuck_point`, `explicit_ask`) and `none`, with confidence surfaced, via a fake/mock backend.
 - **Progress:**
-  - 2026-06-15 — claimed; freezing `WallVerdict` first (the gap qa-tuning flagged), then `WallDetector` + heuristic backend.
-- **Notes:** Real backend (local SLM) arrives in Phase 2 behind this same interface.
+  - 2026-06-15 — claimed; froze `WallVerdict` + `WallCategory` (StrEnum) in `jarvis/types.py`.
+  - 2026-06-15 — shipped `core/wall_detector.py` (`WallDetector` over the frozen `WallBackend` Protocol seam + `HeuristicWallBackend` Phase-0 backend). Resolved the T-009 `WallVerdictLike` TODO in `tests/fakes.py` (now returns the real `WallVerdict`; `wall()`/`no_wall()` build real verdicts). 21 new tests in `test_wall_detector.py`. Suite 81 green, ruff clean.
+- **Notes:** **AWAITING qa-tuning REVIEW** (mandatory: WallDetector + thresholds). Completed-pending. **`WallVerdict` is FROZEN** — `is_wall: bool`, `category: WallCategory` (enum), `confidence: float [0,1]`, `offer: str`; `WallVerdict.none()` for the non-wall case. Real-backend contract note for local-ml-engineer (T-203) is in `module-map.md` §"Contract for the real backend". **Detector applies NO confidence threshold — the speak gate is SummonController policy (T-007).** Real backend (Qwen2.5/MLX, T-203) drops in behind the same seam.
 
 ### T-006 — TurnTakingGate on a simulated clock (with tests)
 - **Status:** open

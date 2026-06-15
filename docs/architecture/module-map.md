@@ -94,12 +94,20 @@ class Utterance:
     text: str
     ts: float            # monotonic seconds, supplied by the producer (injected clock / VAD)
 
+class WallCategory(StrEnum):   # FROZEN (T-005) — jarvis/types.py
+    UNANSWERED_QUESTION = "unanswered_question"
+    FACTUAL_GAP         = "factual_gap"
+    STUCK_POINT         = "stuck_point"
+    EXPLICIT_ASK        = "explicit_ask"
+    NONE                = "none"
+
 @dataclass(frozen=True)
-class WallVerdict:        # what a WallBackend returns
+class WallVerdict:        # FROZEN (T-005) — what a WallBackend returns
     is_wall: bool
-    category: str         # unanswered_question | factual_gap | stuck_point | explicit_ask | none
-    confidence: float
-    offer: str            # the single sentence Jarvis would say, if it spoke
+    category: WallCategory   # NONE iff is_wall is False
+    confidence: float        # [0.0, 1.0]; surfaced raw — the speak gate is SummonController's
+    offer: str               # the single sentence Jarvis would say, if it spoke
+    # WallVerdict.none() builds the common (False, NONE, 0.0, "") result.
 
 @dataclass(frozen=True)
 class Interjection:       # a Path-B offer that cleared the gate
@@ -123,12 +131,38 @@ hidden clock" constraint true all the way down to the data type and lets
 `MicSource` must stamp `ts` from the VAD timeline when it builds an `Utterance`.
 
 `EngagementHandoff` is the two-way seam with voice-integration-engineer: I own its
-shape, they own whether it carries enough context. `WallVerdict` is the seam I
-freeze **with** local-ml-engineer before they build the real backend — my
-`WALL_CONFIDENCE_TO_SPEAK` gate reads *their* `confidence` field. (`WallVerdict`,
-`Interjection`, `EngagementHandoff` are documented above but land in `types.py`
-with their own tasks — T-005 / T-007 / T-008 — so each freezes when its first real
-consumer does.)
+shape, they own whether it carries enough context. `WallVerdict` is **frozen as of
+T-005** (`jarvis/types.py`, with the `WallCategory` `StrEnum`) — `SummonController`'s
+`WALL_CONFIDENCE_TO_SPEAK` gate reads its `confidence` field. (`Interjection` and
+`EngagementHandoff` are documented above but land in `types.py` with their own
+tasks — T-007 / T-008 — so each freezes when its first real consumer does.)
+
+#### Contract for the real backend (T-203, local-ml-engineer)
+
+The `WallVerdict` shape above is **frozen** — the real Qwen2.5/MLX backend (T-203)
+must produce exactly this, behind the `WallBackend.detect_wall(transcript, summary)
+-> WallVerdict` seam, so it drops in with **zero change** to `WallDetector` or
+`SummonController`. Concretely:
+
+- **Return the frozen `WallVerdict`** (`jarvis.types.WallVerdict`), not a dict. The
+  prototype's structured-output JSON (`{is_wall, category, confidence, offer}`,
+  `prototypes/attention-layer/attention_layer.py::Backend.detect_wall`) maps 1:1 —
+  the JSON-schema `enum` is exactly `WallCategory`'s five values, so parse the
+  model's JSON and construct the dataclass.
+- **`category` is a `WallCategory` member**, and it is `NONE` **iff** `is_wall` is
+  `False`. (`WallCategory(str_value)` coerces the wire string; `WallVerdict.none()`
+  is the canonical non-wall result.)
+- **`confidence ∈ [0.0, 1.0]`, surfaced raw.** Do **not** apply any speak threshold
+  in the backend — calibrate the model's confidence, but the
+  `WALL_CONFIDENCE_TO_SPEAK` cut is `SummonController` policy (T-007), downstream.
+  Favor precision over recall in the prompt (only flag a wall you're confident in),
+  per the success metric.
+- **`offer`** is the single spoken-style sentence Jarvis would say; empty (`""`) for
+  a non-wall verdict.
+- **Phase-0 reference:** `HeuristicWallBackend` (`jarvis/core/wall_detector.py`) is
+  the behavior to match/exceed — same seam, same return type. Tests in
+  `tests/test_wall_detector.py` pin the per-category contract; the real backend
+  should keep them green when swapped in (T-204).
 
 ---
 
@@ -198,15 +232,23 @@ large window holding both topics keeps the basis/current keyword overlap above
 threshold. This is correct "the conversation actually moved on" behavior, not a
 brief tangent; it's what `AttentionLayer` (T-008) wiring must size the window for.
 
-### `WallDetector` — notices the conversation needs help (T-005) · **review-gated**
-Interface over a **swappable** `WallBackend`, plus a heuristic mock backend.
-Surfaces confidence so `SummonController`'s gate can apply
-`WALL_CONFIDENCE_TO_SPEAK` (precision over recall).
+### `WallDetector` — notices the conversation needs help (T-005) · **review-gated** · **done (pending qa-tuning review)**
+A **thin** interface over a **swappable** `WallBackend`, plus the Phase-0
+heuristic backend. Surfaces confidence **raw** so `SummonController`'s gate can
+apply `WALL_CONFIDENCE_TO_SPEAK` (precision over recall) — the detector itself
+applies **no** threshold (it's a pure sensor; the speak decision is T-007 policy,
+kept in one place).
 ```
-detect(transcript: str, summary: str) -> WallVerdict
+WallDetector(backend: WallBackend)
+detect(transcript: str, summary: str) -> WallVerdict   # delegates to backend.detect_wall
 ```
-Seam: `WallBackend.detect_wall(transcript: str, summary: str) -> WallVerdict`.
-Real backend (local SLM, structured output) arrives Phase 2 behind this interface.
+Seam (**frozen, T-005**): `WallBackend.detect_wall(transcript: str, summary: str) -> WallVerdict`
+— a `typing.Protocol` in `core/wall_detector.py`; the method/args match
+`tests/fakes.py::FakeWallBackend.detect_wall` exactly. Phase-0 backend:
+`HeuristicWallBackend` (cue-pattern match on the last line → category, ported from
+the prototype's `_mock_detect_wall` + a `stuck_point` cue so all four wall
+categories are reachable). Real backend (Qwen2.5/MLX, structured output) arrives
+Phase 2 (T-203) behind this interface — see "Contract for the real backend" above.
 
 ### `TurnTakingGate` — endpoint / gap / abort timing (T-006) · **review-gated**
 Consumes VAD/clock events on an **injected clock**; reports the timing predicates
@@ -290,14 +332,14 @@ ElevenLabs turns the mock pipeline into the live one with no change to the core.
 ```
 src/jarvis/
 ├── __init__.py            # version + package docstring  (T-001, done)
-├── types.py               # Utterance (FROZEN, T-002 done); WallVerdict/Interjection/EngagementHandoff land w/ their tasks
+├── types.py               # Utterance (FROZEN, T-002); WallVerdict + WallCategory (FROZEN, T-005); Interjection/EngagementHandoff land w/ their tasks
 ├── core/
 │   ├── __init__.py            # core package docstring  (T-002, done)
 │   ├── text.py                # shared keywords()/jaccard() helpers  (T-002, done)
 │   ├── rolling_window.py      # T-002  ✅ done
 │   ├── topic_shift.py         # T-003  ✅ done
 │   ├── living_summary.py      # T-004  ✅ done (+ SummarizerBackend Protocol)
-│   ├── wall_detector.py       # T-005 (interface + mock backend)
+│   ├── wall_detector.py       # T-005  ✅ done (WallDetector + WallBackend Protocol + HeuristicWallBackend)
 │   ├── turn_taking_gate.py    # T-006
 │   └── summon_controller.py   # T-007
 ├── adapters/

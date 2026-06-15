@@ -16,16 +16,15 @@ Seam → fake map (kept in lockstep with the module map):
     EngagedResponder.respond(handoff) -> str               →  FakeResponder
     VoiceOutput.speak(text) -> None                        →  FakeVoice
 
-Sequencing note (T-009): some real types do not exist yet. ``WallVerdict``
-lands with T-005 (its shape is frozen *with* local-ml-engineer). Until then,
-``FakeWallBackend`` returns ``WallVerdictLike`` — a lightweight structure with
-the documented fields (``is_wall``, ``category``, ``confidence``, ``offer``).
-When the real type lands, swap the construction (see the TODO marker below);
-the field names already match so call sites won't change.
+Sequencing note (T-009 → resolved T-005): ``WallVerdict`` was frozen in T-005
+(`jarvis.types.WallVerdict`, with the `WallCategory` enum). ``FakeWallBackend``
+now returns the **real** ``WallVerdict`` — the T-009 ``WallVerdictLike`` stand-in
+is retired and ``WallVerdictLike`` is kept as a thin alias of ``WallVerdict`` for
+any test that still imports the old name. The ``wall``/``no_wall`` helpers build
+real verdicts.
 
-These fakes import nothing from ``jarvis`` on purpose: they must be usable
-before any core module or real type exists, and they encode only the *seam
-shape*, not any module's internals.
+Beyond that one real type, the fakes import as little from ``jarvis`` as
+possible: they encode the *seam shape*, not any module's internals.
 """
 
 from __future__ import annotations
@@ -33,34 +32,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from jarvis.types import WallCategory, WallVerdict
+
 # ---------------------------------------------------------------------------
-# Stand-in for the real WallVerdict (T-005). Mirrors the frozen field set in
-# module-map.md so FakeWallBackend can return something verdict-shaped today.
-# TODO(T-005): swap to the real `jarvis.types.WallVerdict` when it lands; the
-# field names already match, so only the import/construction changes.
+# WallVerdict was frozen in T-005 (resolving the T-009 TODO). Keep the old
+# ``WallVerdictLike`` name as an alias so any test importing it still works; new
+# tests use ``jarvis.types.WallVerdict`` directly via the ``wall``/``no_wall``
+# helpers below.
 # ---------------------------------------------------------------------------
-WALL_CATEGORIES = (
-    "unanswered_question",
-    "factual_gap",
-    "stuck_point",
-    "explicit_ask",
-    "none",
-)
+WallVerdictLike = WallVerdict
 
-
-@dataclass(frozen=True)
-class WallVerdictLike:
-    """The documented WallBackend return shape (see module-map.md §"Data types")."""
-
-    is_wall: bool
-    category: str
-    confidence: float
-    offer: str
-
-    @classmethod
-    def none(cls) -> WallVerdictLike:
-        """The 'no wall, stay silent' verdict — the common default."""
-        return cls(is_wall=False, category="none", confidence=0.0, offer="")
+WALL_CATEGORIES = tuple(c.value for c in WallCategory)
 
 
 @dataclass
@@ -175,7 +157,7 @@ class FakeWallBackend(_Recorder):
             return self._script.pop(0)
         if self._verdict is not None:
             return self._verdict
-        return WallVerdictLike.none()
+        return WallVerdict.none()
 
     # --- assertion helpers ---
     @property
@@ -188,22 +170,25 @@ class FakeWallBackend(_Recorder):
 
 
 def wall(
-    category: str,
+    category: str | WallCategory,
     confidence: float,
     offer: str = "Want me to help with that?",
-) -> WallVerdictLike:
-    """Build a positive wall verdict for scripting FakeWallBackend.
+) -> WallVerdict:
+    """Build a positive ``WallVerdict`` for scripting FakeWallBackend.
 
-    TODO(T-005): when the real WallVerdict lands, repoint this helper at it.
+    ``category`` accepts either a :class:`~jarvis.types.WallCategory` member or
+    its wire string (e.g. ``"factual_gap"``) — both are converted to the enum.
+    ``"none"`` is rejected: this helper builds *walls* (use ``no_wall()``).
     """
-    if category not in WALL_CATEGORIES or category == "none":
-        raise ValueError(f"not a wall category: {category!r}")
-    return WallVerdictLike(is_wall=True, category=category, confidence=confidence, offer=offer)
+    cat = WallCategory(category)
+    if cat is WallCategory.NONE:
+        raise ValueError("not a wall category: WallCategory.NONE (use no_wall())")
+    return WallVerdict(is_wall=True, category=cat, confidence=confidence, offer=offer)
 
 
-def no_wall() -> WallVerdictLike:
+def no_wall() -> WallVerdict:
     """Build the 'no wall' verdict (stay silent)."""
-    return WallVerdictLike.none()
+    return WallVerdict.none()
 
 
 # ---------------------------------------------------------------------------
