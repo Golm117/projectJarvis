@@ -8,7 +8,10 @@ license = { text = "Proprietary" }
 authors = [{ name = "project-jarvis" }]
 # Runtime deps are added per-phase behind interfaces (anthropic, elevenlabs,
 # silero-vad, mlx, etc.). Phase 0 is pure-logic + mocks and has none.
-dependencies = []
+dependencies = [
+    "numpy>=2.4.6",
+    "sounddevice>=0.5.5",
+]
 
 [project.optional-dependencies]
 dev = [

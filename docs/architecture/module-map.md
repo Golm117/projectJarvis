@@ -401,6 +401,57 @@ ElevenLabs turns the mock pipeline into the live one with no change to the core.
 
 ---
 
+## The audio sensing path (Phase 1, sensing-engineer) — `jarvis.audio`
+
+Everything *in front of* the `TranscriptSource` seam — the always-on ears that
+turn a microphone into the `Utterance` events `MicSource` (T-104) will yield. This
+is sensing-engineer's package (`src/jarvis/audio/`), built bottom-up in Phase 1.
+
+```
+mic ──► AudioSource ──► SileroVad ──► TurnTakingGate edges (on_speech_start/end)
+   (T-102 SoundDeviceMicSource)  (T-103)   └► segment frames ──► ASR (T-104) ──► Utterance ──► TranscriptSource
+```
+
+### `AudioSource` (seam) + `AudioFrame` + `RingBuffer` + `FakeAudioSource` (T-102) · **done**
+The **audio-path analogue of the injected-backend discipline**: a `Protocol`
+yielding fixed-size `AudioFrame` chunks (**16 kHz mono float32, 512-sample/32 ms**
+— Silero VAD's native geometry), so the VAD (T-103) and the whole test suite
+consume *frames*, never a PortAudio stream — nothing downstream depends on a
+working mic. Mirrors how `ScriptedSource` keeps the core off real hardware.
+```
+AudioFrame(samples: np.ndarray, sample_rate: int = 16_000)   # frozen; .num_samples/.duration/.rms
+class AudioSource(Protocol):
+    sample_rate: int            # constant for the source's life
+    frame_samples: int          # constant frame geometry
+    frames() -> Iterable[AudioFrame]
+```
+- **`SoundDeviceMicSource`** (`audio/mic.py`) — the real always-on capture loop
+  over `sounddevice`/PortAudio. The real-time PortAudio callback `push`-es each
+  frame into a **bounded `RingBuffer`** (never blocks); the consumer `frames()`
+  `pop`-s on its own schedule. Bounded memory: a full ring overwrites the oldest
+  frame and counts `overflows` rather than growing without bound. `sounddevice`
+  is imported **lazily** inside `start()` (importing the package never needs
+  PortAudio). Permission/no-device failures are typed errors
+  (`MicPermissionError`/`NoInputDeviceError`) — **never** fabricated audio.
+- **`FakeAudioSource`** (`audio/source.py`) — the hardware-free stand-in
+  (`.silence(n)` / `.tone(n)` / `.from_pattern([(kind,count),…])`); the VAD and
+  ring-buffer tests run on it deterministically.
+
+The `AudioFrame` carries **no clock** — its only "time" is `num_samples /
+sample_rate`. The VAD (T-103) derives speech/silence *durations* by counting
+frames and emits **edges** (`on_speech_start`/`on_speech_end`) onto the
+`TurnTakingGate`, which stamps them from *its* injected clock — so the audio path
+never reads a wall clock, and the same gate the Phase-0 `ScriptedSource` drove is
+driven live. (Live mic smoke-tested on the M5 at T-102: ~1.47 s real capture, 0
+overflows.) DECISIONS.md 2026-06-15 "Mic capture".
+
+### `SileroVad` segmenter (T-103) · *next*
+Consumes `AudioSource` frames, segments speech vs. silence, emits the gate's
+`on_speech_start()`/`on_speech_end()` edges (+ a generic edge callback). Threshold
+configurable. Feeds T-104 the frames of each speech segment for ASR.
+
+---
+
 ## Event flow (one utterance through the layer)
 
 1. `TranscriptSource` yields an `Utterance`.
@@ -440,6 +491,10 @@ src/jarvis/
 │   ├── transcript_source.py   #   TranscriptSource Protocol + ScriptedSource (drives clock + gate)
 │   ├── backends.py            #   re-exports SummarizerBackend/WallBackend + HeuristicSummarizerBackend (+ HeuristicWallBackend)
 │   └── engaged.py             #   EngagedResponder / VoiceOutput Protocols + PrintResponder/PrintVoice stand-ins
+├── audio/                     # T-102+  ✅ T-102 done (sensing-engineer, Phase 1)
+│   ├── __init__.py            #   re-exports AudioSource/AudioFrame/RingBuffer/FakeAudioSource
+│   ├── source.py             #   AudioSource Protocol + AudioFrame + RingBuffer + FakeAudioSource  (T-102)
+│   └── mic.py                #   SoundDeviceMicSource — real PortAudio always-on capture loop  (T-102)
 └── attention_layer.py     # orchestrator  (T-008)  ✅ done
 ```
 

@@ -279,20 +279,22 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 - **Notes:** **DONE.** Recommendation: **mlx-whisper, `base.en`** (English-only; `small.en` = upgrade lever; whisper.cpp/`pywhispercpp` = fallback). Both runtimes are ~25–125× faster than real time and **tie on WER** at `base.en` — choice decided by runtime strategy: mlx-whisper shares the **MLX/Metal/unified-memory** stack Qwen2.5 will use (Phase 2), so one accelerator stack to budget. Short ~3.8 s utterance: mlx 73 ms / whisper.cpp 52 ms — both negligible vs the ~2 s offer budget. Isolated RSS: mlx 463 MB / whisper.cpp 326 MB. No throttling over a 40× single-session run (NOT a multi-hour soak — that's T-504). **⚠️ Coexistence flag:** measured ASR in isolation — the **ASR + Qwen2.5 concurrent always-on budget** must be measured jointly with local-ml-engineer before either side freezes model sizes. **Phase 1 picks up:** T-102 (mic capture loop) / T-104 (`MicSource`) — wire `mlx-whisper base.en` behind `TranscriptSource`. Spike deps live in the `asr-spike` uv group; T-104 promotes only `mlx-whisper` into real package deps. See `docs/audio/asr-spike.md`.
 
 ### T-102 — Always-on mic capture loop + AudioSource abstraction
-- **Status:** claimed
+- **Status:** done
 - **Priority:** P1
 - **Role:** sensing-engineer
 - **Owner:** sensing-engineer
 - **Phase:** 1
 - **Created:** 2026-06-15T00:00:00Z
 - **Claimed:** 2026-06-15T00:00:00Z
-- **Completed:** —
+- **Completed:** 2026-06-15T00:00:00Z
 - **Depends on:** T-101
 - **Description:** Stand up the always-on microphone capture path that feeds the VAD (T-103) and, ultimately, ASR (T-104). Define a small **`AudioSource`** abstraction (the seam the VAD + tests consume) so nothing downstream depends on real hardware, and implement a real **mic capture loop** over `sounddevice` (PortAudio): continuous, ring-buffered, fixed frame size / sample rate suited to Silero VAD (**16 kHz mono**, fixed frame). No dropped frames; bounded memory (a fixed-size ring buffer, not unbounded growth). A **fake `AudioSource`** feeds synthetic frames in tests so the buffer/loop logic is exercised deterministically with no real mic. Opening the input device triggers a macOS mic-permission prompt for the terminal process; attempt a brief live smoke capture and, **if permission is denied or no device is available, document it — do NOT fail the task or fabricate** a result.
 - **Acceptance:** An `AudioSource` Protocol + a real `SoundDeviceMicSource` (16 kHz mono, fixed frame) + a fake `AudioSource`; a bounded ring buffer with proven no-unbounded-growth behavior. Tests drive the capture/buffer logic via the fake source and assert frame shape/rate, ring-buffer wrap/eviction, and bounded memory — deterministic, no real mic. `uv run pytest -q` green (135 baseline + new), ruff clean. `sounddevice` (+ PortAudio) recorded in DECISIONS.md. Live-mic smoke test either runs (report exactly what happened) or is documented as needing the user to grant mic permission (no fabricated capture).
 - **Progress:**
   - 2026-06-15 — claimed; expanded from the Phase-1 one-liner.
-- **Notes:** Frozen seams to align to (do not reshape): the VAD (T-103) drives `TurnTakingGate.on_speech_start()`/`on_speech_end()` (edge API, gate stamps time from its injected clock); `MicSource` (T-104) feeds `Utterance` behind the `TranscriptSource` seam. `AudioSource` is the new abstraction this task introduces.
+  - 2026-06-15 — shipped `src/jarvis/audio/` package: `source.py` (`AudioSource` Protocol + frozen `AudioFrame` (16 kHz mono float32, 512-sample/32 ms) + bounded `RingBuffer` + `FakeAudioSource` with silence/tone/pattern builders) and `mic.py` (`SoundDeviceMicSource` — real PortAudio always-on loop, callback→ring-buffer→consumer, lazy import, typed permission/no-device errors). 18 tests in `test_audio_source.py` (synthetic frames, no real mic): ring FIFO/wrap/overflow, bounded-memory-under-heavy-push, frame geometry/energy, fake source, Protocol conformance + error classification. Suite **153 green**, ruff clean. `sounddevice`+`numpy` added to real package deps; DECISIONS.md entry.
+  - 2026-06-15 — **LIVE MIC SMOKE TEST RAN** (permission already granted to this terminal): ~1.47 s real capture, 46 frames / 23,552 samples @ 16 kHz mono, **0 overflows**, mean RMS 0.0021 (quiet room, real non-zero energy). Real capture, not fabricated.
+- **Notes:** **DONE** (not a mandatory-review trigger). Frozen seams aligned to (not reshaped): T-103 VAD drives `TurnTakingGate.on_speech_start`/`on_speech_end` (edge API; gate stamps time from its injected clock); `MicSource` (T-104) feeds `Utterance` behind `TranscriptSource`. New abstraction introduced: **`AudioSource`** (the audio-path analogue of the injected-backend discipline) — documented in module-map.md §"The audio sensing path". **T-102 done → T-103 (Silero VAD) is UNBLOCKED:** consume `AudioSource` frames, emit gate edges. Live mic works here — T-103's optional live check can use it; full live-transcript smoke is T-105.
 
 ### T-103 — Silero VAD speech/silence segmentation
 - **Status:** open
