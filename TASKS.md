@@ -641,23 +641,26 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 
 ---
 **T-402 — ElevenLabsVoice: VoiceOutput via ElevenLabs streaming TTS**
-- **Status:** claimed
+- **Status:** done
 - **Owner:** voice-integration-engineer
 - **Claimed:** 2026-06-15T15:00Z
+- **Completed:** 2026-06-15T15:30Z
 - **Scope:** Implement `ElevenLabsVoice` in `src/jarvis/adapters/elevenlabs_voice.py`. Satisfies the `VoiceOutput` Protocol (`speak(text) -> None`). Streamed TTS; first audio ≤ 2 s. Configurable `voice_id` + model. ElevenLabs client injected for testability. Lazy-imports `elevenlabs` SDK. Key from env (`ELEVENLABS_API_KEY`). Unit tests with mocked client; no audio playback in tests.
 - **Acceptance:** `speak(text)` streams audio to default output; suite green; no real API call in tests.
 - **Progress:**
-  - 2026-06-15T15:00Z — claimed.
-- **Notes:**
+  - 2026-06-15T15:00Z — claimed. Inspected ElevenLabs SDK v2.53.0 surface.
+  - 2026-06-15T15:30Z — shipped `src/jarvis/adapters/elevenlabs_voice.py` + 20 unit tests in `tests/test_elevenlabs_voice.py`. 327 tests green, ruff clean. `elevenlabs>=2.53.0` added to deps.
+- **Notes:** DONE. Not qa-gated (voice output, not gate/summon/wall). API: `client.text_to_speech.stream(voice_id, text=text, model_id=model_id)` returns `Iterator[bytes]`; piped to `elevenlabs.play.stream()` for real-time streaming playback. Default voice: Rachel (21m00Tcm4TlvDq8ikWAM), model: eleven_multilingual_v2. Both lazy-imported; injected play callable keeps audio out of tests. Handoff → T-403 (token-stream Claude → ElevenLabs pipeline).
 
 ---
 **T-403 — Token-stream Claude → ElevenLabs; barge-safe**
-- **Status:** open
-- **Owner:**
-- **Claimed:**
+- **Status:** claimed
+- **Owner:** voice-integration-engineer
+- **Claimed:** 2026-06-15T15:30Z
 - **Scope:** Add internal `respond_and_speak(handoff)` method to the voice adapters that pipes Claude token stream directly into ElevenLabs streaming input for ~1–2 s first-audio latency. Barge-safe: playback interruptible on stop signal or resumed speech. Keep `respond()->str` and `speak(text)->None` protocols intact for orchestrator `_engage()` and unit tests.
 - **Acceptance:** First audio begins within ~2 s of handoff; stop signal aborts playback cleanly; suite green.
 - **Progress:**
+  - 2026-06-15T15:30Z — claimed.
 - **Notes:**
 
 ---

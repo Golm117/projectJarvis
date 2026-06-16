@@ -12,6 +12,7 @@ authors = [{ name = "project-jarvis" }]
 # The cloud deps (anthropic, elevenlabs) arrive in Phase 4 behind interfaces.
 dependencies = [
     "anthropic>=0.109.2",
+    "elevenlabs>=2.53.0",
     "mlx-lm>=0.31.3",
     "mlx-whisper>=0.4.3",
     "numpy>=2.4.6",

@@ -25,7 +25,7 @@ Keep entries short. One paragraph per field is plenty. If it takes more, it prob
 **Context:** Phase 4 replaces `PrintResponder`/`PrintVoice` stand-ins with real Claude + ElevenLabs adapters behind the frozen seams. Three new runtime deps needed.
 **Decision:**
 - `anthropic>=0.109.2` — official Anthropic Python SDK; required for `ClaudeResponder` (`claude-opus-4-8` Messages API).
-- `elevenlabs` (to be added in T-402) — official ElevenLabs Python SDK; required for `ElevenLabsVoice` streaming TTS.
+- `elevenlabs>=2.53.0` (added in T-402) — official ElevenLabs Python SDK; required for `ElevenLabsVoice` streaming TTS.
 - `python-dotenv>=1.2.2` — `load_dotenv()` at the live entry point so `ANTHROPIC_API_KEY` and `ELEVENLABS_API_KEY` are picked up from `.env` without polluting the shell environment.
 **Rationale:** Approved stack per `.pdr.md`. Official SDKs preferred over raw HTTP per project convention. `python-dotenv` is the lightest-weight solution for local key loading; keeps keys out of the shell session and out of version control. All three are lazy-imported inside the adapter modules so `uv run pytest` stays offline.
 **Alternatives considered:** Raw `httpx` for API calls (rejected — project convention is official SDKs when they exist). Hardcoded keys (rejected — hard no per project security policy). Env-only without dotenv (rejected — would require the user to `export` keys in shell; dotenv is more ergonomic for local dev).
