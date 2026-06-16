@@ -468,11 +468,13 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
   5. **Test gap:** No test covers the case where the model produces `is_wall=True` with confidence exactly 0.70 (the SummonController floor boundary). That boundary test lives in T-007/SummonController tests; the backend just surfaces raw — but qa-tuning may want to confirm the end-to-end 0.70 path in an integration test.
 
 ### T-204 — Swap mock backend → local backend in orchestrator
-- **Status:** open
+- **Status:** claimed
 - **Priority:** P0
 - **Role:** local-ml-engineer
+- **Owner:** local-ml-engineer
 - **Phase:** 2
 - **Created:** 2026-06-15T00:00:00Z
+- **Claimed:** 2026-06-15T20:00:00Z
 - **Depends on:** T-203 ✅ (done — qa-tuning approved 2026-06-15T19:30Z; **T-204 is now UNBLOCKED**)
 - **Description:** Swap mock backend → local backend behind existing interfaces; re-run core tests green. Construct ONE shared `QwenModel()` at startup and inject the same instance into both `QwenSummarizerBackend` (T-202) and `QwenWallBackend` (T-203) — no double-load. The swap touches neither `WallDetector`/`SummonController` (frozen seams) nor any threshold. [local-ml-engineer]
 - **Notes:** **qa-tuning carry-forwards from the T-203 review (for the swap + the live re-check):** (1) The Qwen backend has **partial factual_gap recall** — declarative gaps ("I don't remember…") MISS, question-form gaps fire. The T-105 live-smoke Path-B trigger ("What was the date of the conference again?") **still fires** factual_gap @ 0.95 under Qwen, so the live demo path is preserved across the swap — but if you re-run any live smoke that relied on a *declarative* factual_gap line, expect silence (that's the accepted v0 tradeoff, deferred to T-503), not a regression. (2) The model emits **near-binary confidence (~0.95 on fires)** so the 0.70 floor is inert for this backend — fine for the swap; recalibration is T-503. Do NOT change the floor in T-204 (qa-gated).
