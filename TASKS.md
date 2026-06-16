@@ -859,4 +859,27 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 - **Progress:**
   - 2026-06-16T20:00:00Z — claimed; orientation complete (mic_source.py, vad.py, source.py, NOTES, TASKS, asr-spike.md all read).
   - 2026-06-16T20:30:00Z — implemented `DEFAULT_PRE_ROLL_FRAMES=10`, `deque(maxlen=pre_roll_frames)` in `MicSource.__init__`, frame appended post-VAD in `utterances()` loop, `_on_edge` seeds `_segment_frames = list(self._pre_roll)` on `speech_start`. 12 new tests in `tests/test_t506_pre_roll.py`. 466 green, ruff clean. Committed.
-- **Notes:** DONE. NOT qa-gated (audio path only; TurnTakingGate/SummonController/WallDetector byte-for-byte unchanged). **Root cause confirmed:** `_segment_frames = []` at `speech_start` with no pre-roll buffer; sub-threshold onset frames never captured. **Fix:** `collections.deque(maxlen=10)` in `MicSource` grows every frame; `speech_start` seeds the segment from it (then clears it to avoid inter-segment bleed). **Key design detail:** frame is appended to pre-roll AFTER `process_frame()`, so the triggering frame is not in the deque when the edge fires — it enters the segment through the normal loop append, avoiding duplication. `ts` semantics unchanged (stamped at `speech_end`, unaffected by pre-roll). **Live re-test honesty:** `--say` loopback (TTS → speakers → built-in mic) is not suitable for demonstrating onset recovery — TTS has no soft onset, and ambient room audio causes Whisper hallucinations in this setup. Unit tests prove the mechanism conclusively; real-voice onset capture must be confirmed by the user speaking naturally at the mic. **Files changed:** `src/jarvis/audio/mic_source.py`, `tests/test_t506_pre_roll.py`. **→ Remaining Phase 5:** only T-504 (thermal/battery soak, deferred).
+- **Notes:** DONE. NOT qa-gated (audio path only; TurnTakingGate/SummonController/WallDetector byte-for-byte unchanged). **Root cause confirmed:** `_segment_frames = []` at `speech_start` with no pre-roll buffer; sub-threshold onset frames never captured. **Fix:** `collections.deque(maxlen=10)` in `MicSource` grows every frame; `speech_start` seeds the segment from it (then clears it to avoid inter-segment bleed). **Key design detail:** frame is appended to pre-roll AFTER `process_frame()`, so the triggering frame is not in the deque when the edge fires — it enters the segment through the normal loop append, avoiding duplication. `ts` semantics unchanged (stamped at `speech_end`, unaffected by pre-roll). **Live re-test honesty:** `--say` loopback (TTS → speakers → built-in mic) is not suitable for demonstrating onset recovery — TTS has no soft onset, and ambient room audio causes Whisper hallucinations in this setup. Unit tests prove the mechanism conclusively; real-voice onset capture must be confirmed by the user speaking naturally at the mic. **Files changed:** `src/jarvis/audio/mic_source.py`, `tests/test_t506_pre_roll.py`. **→ Next Phase 5:** T-507 (anti-fragmentation endpointing + question fidelity) before T-504 (thermal/battery soak, deferred).
+
+### T-507 — Anti-fragmentation endpointing + question fidelity
+- **Status:** claimed
+- **Priority:** P1
+- **Role:** sensing-engineer
+- **Owner:** sensing-engineer
+- **Phase:** 5
+- **Created:** 2026-06-16T21:00:00Z
+- **Claimed:** 2026-06-16T21:00:00Z
+- **Completed:** —
+- **Depends on:** T-506 (done)
+- **Description:** Live user log shows single questions/sentences split into fragments: "times 7." + "What does that equal?" (one question, two segments). Root cause: `DEFAULT_SILENCE_END_FRAMES = 6` (192 ms) is shorter than a natural breath-length mid-sentence pause (~300–500 ms). Fix: raise the VAD endpoint hangover to ~480 ms (15 frames at 32 ms/frame) so intra-sentence pauses do not split utterances. Keep it configurable. Also investigate whether `MlxWhisperTranscriber` has an initial_prompt/decoding lever that improves punctuation on whole utterances (especially `?`). Two sub-goals: (1) anti-fragmentation — longer hangover; (2) question fidelity — verify/improve `?` emission.
+- **Acceptance:**
+  - `DEFAULT_SILENCE_END_FRAMES` raised to 15 frames (~480 ms); old value documented; reasoning + tradeoff documented in vad.py docstring and this task.
+  - Constant is configurable (already constructor-injectable in `SileroVad`).
+  - Tests (model-free, `FakeAudioSource` + `EnergyFrameClassifier`): (a) a short (sub-hangover) internal silence stays ONE segment; (b) a genuine longer silence still closes the segment; (c) existing edge/segment/gate tests pass.
+  - ASR punctuation investigation result documented.
+  - Suite stays green (466 baseline → target); ruff clean.
+  - NOT qa-gated (VAD endpointing / sensing path only; no change to TurnTakingGate/SummonController/WallDetector/any threshold).
+  - Live before/after note (honest about loopback limits).
+- **Progress:**
+  - 2026-06-16T21:00:00Z — claimed; orientation complete (vad.py, mic_source.py, source.py, test_vad.py, test_t506_pre_roll.py, NOTES all read).
+- **Notes:** Hangover tradeoff: +288 ms delay vs 192 ms (a modest increment; the politeness gap is 2 s and the summon still fires on the full utterance). A genuine ~1 s thinking pause (like the "times 7 … what does that equal?" gap) is a real turn boundary and will still split — merging those would cost too much latency; not chased here. ASR punctuation: Whisper emits `?` reliably on whole utterances with prosodic context; `initial_prompt` may help but default is already good with full segments.
