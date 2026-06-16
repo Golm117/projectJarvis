@@ -17,7 +17,46 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-15 (T-304 done → PHASE 3 COMPLETE)
+## Current state — 2026-06-16 (T-401→T-404 done → PHASE 4 COMPLETE)
+
+**Phase:** phase_4 → **COMPLETE.** All four Phase-4 tasks done: T-401 (ClaudeResponder), T-402 (ElevenLabsVoice), T-403 (VoiceSession streaming pipeline), T-404 (wire + live test). Suite **347 green**, ruff clean. On `main`, not pushed.
+
+**Phase 4 — what was built:**
+
+- **T-401 — `ClaudeResponder`** (`src/jarvis/adapters/claude_responder.py`): `EngagedResponder` via `claude-opus-4-8`. Frozen spoken-style system prompt: 1–3 sentences, no preamble, plain prose, peer-who-was-listening register. Lazy `import anthropic`; injected client for offline tests. 26 unit tests. `anthropic>=0.109.2` + `python-dotenv>=1.2.2` added to real deps.
+
+- **T-402 — `ElevenLabsVoice`** (`src/jarvis/adapters/elevenlabs_voice.py`): `VoiceOutput` via ElevenLabs. `text_to_speech.stream(voice_id, text=..., model_id=...)` → `Iterator[bytes]` → `elevenlabs.play.stream()` for real-time streaming playback via `mpv`. Lazy imports; injected client + play callable for offline tests. Default voice: Rachel (`21m00Tcm4TlvDq8ikWAM`), model: `eleven_multilingual_v2`. 20 unit tests. `elevenlabs>=2.53.0` added. `mpv` installed via brew.
+
+- **T-403 — `VoiceSession`** (`src/jarvis/adapters/voice_session.py`): sentence-chunked streaming pipeline. `client.messages.stream()` + `stream.text_stream` for token iteration. Tokens buffered to sentence boundaries (`_SENTENCE_END_RE`) or `_MAX_CHUNK_CHARS=200` force-flush. Each chunk sent to `ElevenLabsVoice.speak()` while Claude generates the next. Stop event checked before each chunk (barge-in safety at sentence granularity). `respond()` method satisfies `EngagedResponder` Protocol via the streaming path. 20 unit tests.
+
+- **T-404 — wired into `--live --voice`** (`live.py`, `__main__.py`): `load_dotenv()` at live entry. `_build_voice_session()` lazy-builds `VoiceSession(ClaudeResponder(), ElevenLabsVoice())`. `_SilentVoice` no-op suppresses the second `voice.speak()` call (since `VoiceSession.respond()` already speaks). `--voice` / `--real-voice` flags in `__main__.py`. Default stays print stand-ins.
+
+**Live test results on M5 (2026-06-16, BlackHole loopback + Shure MV7+ mic, verbatim):**
+
+Run 1 (heuristic brain + voice): "Jarvis" wake word → ENGAGEMENT (trigger: summon). "What time is it right now?" → `unanswered_question @ 0.72` → ENGAGEMENT (wall:unanswered_question). Both fired `VoiceSession.respond_and_speak()`. ElevenLabs audio confirmed heard.
+
+Run 2 (isolated VoiceSession timing test): "Jarvis, what is a Python decorator used for?"
+- Claude response: "A decorator is a function that wraps another function to extend or modify its behavior without changing the original code. You apply it with the @ syntax right above a function definition, and it's commonly used for things like logging, timing, or access control."
+- **First-audio latency: 2.14 s** (within the ~2 s target from the latency budget).
+- Total time (2-sentence response + full TTS playback): 20.3 s.
+- Voice register: 2 sentences, plain prose, no preamble — correct spoken-style.
+
+**Response quality sample (live):** "useEffect lets you run side effects in a function component — things like fetching data, setting up subscriptions, or manually touching the DOM after render. You pass it a function and a dependency array, and it reruns whenever those dependencies change." — exact spoken-style, peer-who-was-listening register.
+
+**→ Phase 5 (Make it live & tune) picks up:**
+- T-501: always-on end-to-end run on the M5 (core-engineer)
+- T-502: capture-and-label tooling for real conversations (qa-tuning)
+- T-503: threshold tuning against interjection-precision metric (qa-tuning)
+- T-504: stability / thermal / battery pass for sustained always-on (sensing-engineer)
+
+**Human decisions needed before Phase 5:**
+1. ElevenLabs voice ID — Rachel (default) is fine; if a different voice is wanted, it is a product decision. See `docs/voice/response-contract.md`.
+2. API costs — `claude-opus-4-8` @ $5/M input + $25/M output; `eleven_multilingual_v2` standard pricing. Acceptable for always-on interjection cadence? (Each engagement is ~1–3 sentences.)
+3. Always-on loop design (T-501) — Phase 5 removes the `--seconds` window and runs indefinitely; needs a graceful shutdown signal.
+
+---
+
+## Prior state — 2026-06-15 (T-304 done → PHASE 3 COMPLETE)
 
 **Phase:** phase_3 → **COMPLETE.** All four Phase-3 tasks done: T-301 (one-clock invariant), T-302 (continuous ticker, qa-approved), T-303 (live validation, qa-approved), T-304 (latency budget). Suite **281 green**, ruff clean. On `main`, not pushed.
 

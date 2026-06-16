@@ -71,6 +71,28 @@ class VoiceSession:
         self.voice = voice
 
     # ------------------------------------------------------------------
+    # EngagedResponder Protocol (streaming path)
+    # ------------------------------------------------------------------
+
+    def respond(self, handoff: EngagementHandoff) -> str:
+        """Satisfy the ``EngagedResponder`` Protocol via the streaming pipeline.
+
+        When a ``VoiceSession`` is used as the responder in ``AttentionLayer``,
+        this method streams Claude tokens directly to ElevenLabs — no full-text
+        intermediate.  The caller (orchestrator) then passes the returned string
+        to ``voice.speak()``, which must be a no-op (since speaking is already
+        done here).  In ``run_live`` with ``--voice``, ``PrintVoice`` fills that
+        role.
+
+        Args:
+            handoff: the engagement context from the orchestrator.
+
+        Returns:
+            The full spoken text (all sentence chunks joined).
+        """
+        return self.respond_and_speak(handoff)
+
+    # ------------------------------------------------------------------
     # Streaming pipeline entry point
     # ------------------------------------------------------------------
 

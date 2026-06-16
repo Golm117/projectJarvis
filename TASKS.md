@@ -667,13 +667,15 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 
 ---
 **T-404 — Wire real voice adapters into --live behind --voice flag; live test on M5**
-- **Status:** claimed
+- **Status:** done
 - **Owner:** voice-integration-engineer
 - **Claimed:** 2026-06-15T16:00Z
+- **Completed:** 2026-06-16T00:00Z
 - **Scope:** Add `--voice` / `--real-voice` flag to `__main__.py` and `run_live()` in `live.py`. Default stays `PrintResponder`/`PrintVoice`. With `--voice`: use `ClaudeResponder` + `ElevenLabsVoice` (via `respond_and_speak`). Add `load_dotenv()` at live entry. Run live on M5: capture verbatim Claude answer, confirm ElevenLabs audio played, measure first-audio latency. Try interjection-triggered engagement. Update NOTES.md: Phase 4 COMPLETE + Phase 5 picks up.
 - **Acceptance:** `uv run jarvis --live --voice` produces spoken answer within ~2 s; suite green without keys; NOTES.md updated.
 - **Progress:**
-- **Notes:**
+  - 2026-06-16T00:00Z — wired `--voice`/`--real-voice` into `__main__.py` + `live.py`. Added `load_dotenv()`, `_build_voice_session()`, `_SilentVoice`. Ran live on M5 (Shure MV7+): both Path-A (summon) and Path-B (unanswered_question) fired, ElevenLabs audio confirmed heard. First-audio latency: 2.14 s. 347 tests green, ruff clean. NOTES.md updated: Phase 4 COMPLETE.
+- **Notes:** DONE — Phase 4 COMPLETE. First-audio latency 2.14 s (measured isolated VoiceSession timing test, M5 Pro). Real voice path: `python -m jarvis --live --voice [--local-brain]`. Default (no --voice) stays print stand-ins, no API keys needed. Response register confirmed correct (2 sentences, no preamble, plain prose). `mpv` installed via brew (required by elevenlabs.play.stream). Human decisions needed: voice ID choice (Rachel default), API cost acceptance, always-on loop design for T-501.
 
 ### Phase 5 — Make it live & tune
 - (planned T-501) Always-on end-to-end run on the M5. [core-engineer]

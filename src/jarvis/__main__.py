@@ -5,8 +5,8 @@ Default (``python -m jarvis``): plays a scripted conversation through the real
 events it emits — living-summary updates, a proactive interjection, and a wake-word
 summon → ``EngagementHandoff``. See ``jarvis.demo``.
 
-``python -m jarvis --live`` (T-105 / T-204): runs the **real** ambient pipeline on
-live mic audio — real microphone → Silero VAD → mlx-whisper ``base.en`` →
+``python -m jarvis --live`` (T-105 / T-204 / T-404): runs the **real** ambient pipeline
+on live mic audio — real microphone → Silero VAD → mlx-whisper ``base.en`` →
 ``Utterance`` — through the same orchestrator. Flags:
 
 * ``--seconds N`` — how long to listen (default 12).
@@ -17,6 +17,11 @@ live mic audio — real microphone → Silero VAD → mlx-whisper ``base.en`` �
   Loads the ~2 GB weights on the first inference call.
 * ``--mock-brain`` — explicitly select the heuristic mock backends (the default).
   Useful to confirm the flag is ignored in test contexts.
+* ``--voice`` / ``--real-voice`` — enable the real Claude ``claude-opus-4-8`` +
+  ElevenLabs spoken-response path. Requires ``ANTHROPIC_API_KEY`` and
+  ``ELEVENLABS_API_KEY`` in the environment (or a ``.env`` file; ``load_dotenv()``
+  is called automatically). Without this flag, the print stand-ins are used (no
+  API keys needed).
 
 The ``--live`` path touches a microphone and loads MLX; it is never exercised by
 ``uv run pytest`` (the live wiring lives in ``jarvis.live`` with lazy mic imports),
@@ -79,6 +84,24 @@ def main(argv: list[str] | None = None) -> int:
         default=False,
         help="(--live) explicitly select the heuristic mock backends (default; no model load)",
     )
+    # Voice selection (T-404): --voice / --real-voice enables Claude + ElevenLabs.
+    # Both flags are accepted as aliases (--voice is the short form; --real-voice is
+    # explicit). Default = print stand-ins (no API keys needed).
+    voice_group = parser.add_mutually_exclusive_group()
+    voice_group.add_argument(
+        "--voice",
+        dest="real_voice",
+        action="store_true",
+        default=False,
+        help="(--live) use the real Claude claude-opus-4-8 + ElevenLabs TTS voice path "
+        "(requires ANTHROPIC_API_KEY + ELEVENLABS_API_KEY in env or .env file)",
+    )
+    voice_group.add_argument(
+        "--real-voice",
+        dest="real_voice",
+        action="store_true",
+        help="(--live) alias for --voice",
+    )
     args = parser.parse_args(argv)
 
     if not args.live:
@@ -98,6 +121,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # local_brain=True iff --local-brain was passed (--mock-brain or default = False).
     local_brain: bool = getattr(args, "local_brain", False)
+    # real_voice=True iff --voice or --real-voice was passed.
+    real_voice: bool = getattr(args, "real_voice", False)
 
     try:
         run_live(
@@ -106,6 +131,7 @@ def main(argv: list[str] | None = None) -> int:
             device=device,
             stop_after_text=args.stop_after,
             local_brain=local_brain,
+            real_voice=real_voice,
         )
     except MicCaptureError as exc:
         print(f"[live] could not open the microphone: {exc}", file=sys.stderr)

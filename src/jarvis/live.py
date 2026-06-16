@@ -1,4 +1,4 @@
-"""``run_live`` — the real ambient pipeline on live audio (T-105 / T-204 / T-302).
+"""``run_live`` — the real ambient pipeline on live audio (T-105 / T-204 / T-302 / T-404).
 
 Phase 1 (T-105): the **real** ``AttentionLayer`` driven by a **real** ``MicSource``
 — real microphone (``SoundDeviceMicSource``) → real Silero VAD → real mlx-whisper
@@ -24,6 +24,14 @@ silence — ``AttentionLayer.ingest`` never runs, so Path B's
 grows.  A **daemon ticker thread** calls ``layer.tick()`` every
 ``TICK_INTERVAL_SECONDS`` (~200 ms) throughout the listen window, allowing the wall
 interjection to fire mid-conversation once the gate's politeness gap opens.
+
+Phase 4 (T-404): **real voice** — Claude ``claude-opus-4-8`` + ElevenLabs streaming
+TTS behind the ``--voice`` flag.  ``load_dotenv()`` is called at the live entry so
+``ANTHROPIC_API_KEY`` and ``ELEVENLABS_API_KEY`` are picked up from ``.env``.  The
+``VoiceSession`` acts as the ``EngagedResponder`` (streaming respond + speak in one
+call); a no-op ``PrintVoice`` is passed as the ``VoiceOutput`` (since speaking is
+already done inside ``respond()``).  Default stays ``PrintResponder``/``PrintVoice``
+(no keys needed) so ``--live`` without ``--voice`` remains model-free.
 
 **Thread-safety model (T-302):**
 A single ``threading.Lock`` (``_layer_lock``) serialises all access to ``layer``:
@@ -96,6 +104,28 @@ def _say_async(text: str, delay: float = 1.0) -> threading.Thread:
     return t
 
 
+def _build_voice_session() -> object:
+    """Construct a ``VoiceSession`` (ClaudeResponder + ElevenLabsVoice).
+
+    Called only when ``--voice`` is passed.  ``load_dotenv()`` must have been
+    called before this so ``ANTHROPIC_API_KEY`` and ``ELEVENLABS_API_KEY`` are
+    in the environment.  The clients are created lazily inside the adapters on
+    first call — this function just assembles the session object.
+
+    Returns:
+        A ``VoiceSession`` instance (satisfies ``EngagedResponder`` via its
+        ``respond()`` method, which streams Claude → ElevenLabs internally).
+    """
+    from jarvis.adapters.claude_responder import ClaudeResponder
+    from jarvis.adapters.elevenlabs_voice import ElevenLabsVoice
+    from jarvis.adapters.voice_session import VoiceSession
+
+    return VoiceSession(
+        responder=ClaudeResponder(),  # client lazy-created from ANTHROPIC_API_KEY
+        voice=ElevenLabsVoice(),  # client lazy-created from ELEVENLABS_API_KEY
+    )
+
+
 def _build_local_brain_backends() -> tuple[object, object]:
     """Construct one shared ``QwenModel`` and return both Qwen backends.
 
@@ -130,6 +160,7 @@ def run_live(
     now: Callable[[], float] | None = None,
     mic_factory: Callable[[], object] | None = None,
     local_brain: bool = False,
+    real_voice: bool = False,
 ) -> list[Utterance]:
     """Run the real ambient pipeline on live mic audio for a bounded window.
 
@@ -162,13 +193,24 @@ def run_live(
             first inference call).  If ``False`` (default), use the heuristic mock
             backends — no model load, suitable for the quick sanity-check use of
             ``--live`` without the SLM.
+        real_voice: if ``True``, wire the real Claude + ElevenLabs voice adapters
+            via ``VoiceSession`` (reads ``ANTHROPIC_API_KEY`` + ``ELEVENLABS_API_KEY``
+            from the environment — ``load_dotenv()`` is called here before the session
+            is built).  If ``False`` (default), use the print stand-ins — no API keys
+            needed.
 
     Returns the list of ``Utterance`` the pipeline transcribed (for the caller to
     report on). Raises the typed mic errors (``MicPermissionError`` /
     ``NoInputDeviceError``) if the mic can't be opened — never fabricates audio.
     """
+    # T-404: load .env so ANTHROPIC_API_KEY / ELEVENLABS_API_KEY are in the
+    # environment before the voice session is built.  No-op if .env is absent.
+    from dotenv import load_dotenv  # noqa: PLC0415
+
     from jarvis.audio.mic import SoundDeviceMicSource
     from jarvis.audio.mic_source import MicSource
+
+    load_dotenv()
 
     if now is None:
         now = time.monotonic
@@ -203,11 +245,29 @@ def run_live(
     if local_brain:
         summarizer_backend, wall_backend = _build_local_brain_backends()
 
+    # Voice selection (T-404): default = PrintResponder/PrintVoice (no keys);
+    # real_voice=True = VoiceSession (Claude streaming → ElevenLabs TTS).
+    # VoiceSession.respond() streams Claude tokens directly to ElevenLabs, so
+    # _SilentVoice is passed as the VoiceOutput to suppress the second speak() call.
+    class _SilentVoice:
+        """VoiceOutput that does nothing — speaking already done in VoiceSession.respond()."""
+
+        def speak(self, text: str) -> None:
+            pass
+
+    if real_voice:
+        voice_session = _build_voice_session()
+        responder: object = voice_session
+        voice: object = _SilentVoice()
+    else:
+        responder = PrintResponder()
+        voice = PrintVoice(prefix="      jarvis  : ")
+
     layer = AttentionLayer.build(
         gate=gate,
         now=now,
-        responder=PrintResponder(),
-        voice=PrintVoice(prefix="      jarvis  : "),
+        responder=responder,
+        voice=voice,
         summarizer_backend=summarizer_backend,
         wall_backend=wall_backend,
         on_summary_update=on_summary,
@@ -216,9 +276,10 @@ def run_live(
     )
 
     brain_label = "Qwen2.5-3B/MLX (local brain)" if local_brain else "MOCK heuristics"
+    voice_label = "Claude claude-opus-4-8 + ElevenLabs" if real_voice else "print stand-ins"
     print("=" * 70)
     print("  Project Jarvis — LIVE ambient pipeline (real mic · Silero · mlx-whisper)")
-    print(f"  Backends: {brain_label} · engaged path: print")
+    print(f"  Backends: {brain_label} · voice: {voice_label}")
     print(f"  Listening for {seconds:.0f}s …")
     if say_text:
         print(f'  Loopback: speaking via `say`: "{say_text}"')
