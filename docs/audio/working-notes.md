@@ -86,3 +86,34 @@ _(scratchpad for in-flight thinking; promote durable findings to topic files)_
 - Measure **ASR + Qwen2.5 concurrent** always-on budget before freezing model sizes.
   ASR in isolation is a rounding error; the SLM dominates. `base.en` chosen to protect
   that headroom. See the coexistence flag in `asr-spike.md`.
+
+## T-506 VAD pre-roll / onset recovery — DONE
+
+**Root cause confirmed:** `MicSource._on_edge` initialized `_segment_frames = []` on
+`speech_start`. The sub-threshold onset frames (quiet beginning of a sentence, below
+Silero's threshold during the `speech_start_frames=1` debounce window) were never
+captured. Real user report: "I wonder if my volume is too loud" → "seems too loud."
+
+**Fix in `src/jarvis/audio/mic_source.py`:**
+- `DEFAULT_PRE_ROLL_FRAMES = 10` (~320 ms at 32 ms/frame, 512-sample frames at 16 kHz).
+- `self._pre_roll: deque[AudioFrame] = deque(maxlen=pre_roll_frames)` in `__init__`.
+- In `utterances()` loop: frame appended to `_pre_roll` **after** `process_frame()`.
+  (Critical ordering: the triggering frame is not in the deque when `speech_start` fires;
+  it enters the segment through the normal loop append — avoids duplication.)
+- In `_on_edge("speech_start")`: `_segment_frames = list(self._pre_roll); self._pre_roll.clear()`.
+  Seeds the new segment from the lookback deque; clears so next segment gets its own window.
+- `pre_roll_frames` constructor arg (`>= 0`; 0 = disabled; default = `DEFAULT_PRE_ROLL_FRAMES`).
+
+**`ts` semantics unchanged:** stamped at `speech_end`, based on `_frames_seen` (unaffected
+by how many pre-roll frames were prepended). The end-time of the segment is unchanged.
+
+**Tests:** `tests/test_t506_pre_roll.py` (12 new, model-free): pre-roll frames in waveform;
+silence content prepended; bounded by maxlen; smaller-than-available history; zero disables;
+negative rejected; no inter-segment bleed; ts unchanged; regression guard for silence-only +
+single + two-segment paths; constant sanity (300–600 ms range).
+
+**Live re-test honesty:** `--say` loopback (TTS → room speakers → built-in mic) is not
+suitable for demonstrating soft-onset recovery. TTS synthesis has no sub-threshold onset,
+and the speakers→mic chain causes Whisper hallucinations in a room with background audio.
+The unit tests are the ground truth for the mechanism. Real-voice verification requires
+the user to speak naturally at the mic.

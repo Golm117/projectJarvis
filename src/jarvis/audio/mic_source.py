@@ -62,6 +62,7 @@ diarizer can fill this later behind the same field.
 from __future__ import annotations
 
 import re
+from collections import deque
 from collections.abc import Callable, Iterable, Iterator
 from typing import Protocol, runtime_checkable
 
@@ -130,6 +131,29 @@ STOP_SYLLABLES: frozenset[str] = frozenset(
 
 # Pre-compiled regex: a "word" = one or more ASCII letters (no digits, no punct).
 _ALPHA_WORD_RE: re.Pattern[str] = re.compile(r"[a-zA-Z]+")
+
+# ---------------------------------------------------------------------------
+# Pre-roll / lookback buffer — onset recovery (T-506)
+# ---------------------------------------------------------------------------
+# Real-room use revealed that the start of utterances is dropped: the Silero
+# VAD threshold is not crossed until after the quiet beginning of a sentence,
+# so the onset frames (before the speech_start edge fires) are never included
+# in the segment handed to ASR.
+#
+# Fix: maintain a rolling deque of the most recent K frames (every frame,
+# regardless of segment state). When the speech_start edge fires, seed
+# _segment_frames from this deque instead of starting from []. This includes
+# the ~300-500 ms of audio that preceded the threshold crossing in the
+# transcription input.
+#
+# Size choice:
+#   32 ms/frame × 10 frames = 320 ms — covers a normal sentence onset + the
+#   speech_start_frames=1 debounce window. At 32 ms/frame, 16 frames = 512 ms
+#   is the comfortable upper bound (captures soft starters without pulling in
+#   distracting pre-speech silence — Whisper handles leading silence fine, but
+#   keeping it short reduces noise exposure).
+#   10 frames is the DEFAULT; it is tunable via MicSource(pre_roll_frames=...).
+DEFAULT_PRE_ROLL_FRAMES: int = 10
 
 
 def _is_lexical(text: str) -> bool:
@@ -245,6 +269,12 @@ class MicSource:
             say, ~400000 s) would evict every utterance instantly because a
             frame-derived ``ts`` of ~9 s looks ~400000 s stale. The two timelines
             differ only by the boot offset; injecting the shared clock removes it.
+        pre_roll_frames: number of frames to look back before the ``speech_start``
+            edge when opening a segment (the pre-roll / onset-recovery buffer,
+            T-506). At 32 ms/frame, the default of 10 frames gives ~320 ms of
+            lookback — enough to capture a sentence onset that sat below the Silero
+            threshold. Pass ``0`` to disable (reverts to pre-T-506 behaviour). Must
+            be ``>= 0``.
 
     ``MicSource`` wires the VAD's ``gate`` to the given ``gate`` if the VAD was not
     already given one, so the single call ``for u in mic_source.utterances(): ...``
@@ -259,7 +289,10 @@ class MicSource:
         vad: SileroVad | None = None,
         speaker: str = DEFAULT_SPEAKER,
         now: Callable[[], float] | None = None,
+        pre_roll_frames: int = DEFAULT_PRE_ROLL_FRAMES,
     ) -> None:
+        if pre_roll_frames < 0:
+            raise ValueError(f"pre_roll_frames must be >= 0, got {pre_roll_frames}")
         self._source = source
         self._transcriber = transcriber if transcriber is not None else MlxWhisperTranscriber()
         self._speaker = speaker
@@ -279,6 +312,17 @@ class MicSource:
         self._frames_seen = 0  # the VAD timeline, in frames, for Utterance.ts
         self._sample_rate = source.sample_rate
         self._pending: Utterance | None = None  # set by _close_segment, drained per frame
+
+        # Pre-roll / onset-recovery buffer (T-506): a rolling deque of the last K
+        # frames, maintained regardless of segment state. When speech_start fires,
+        # its contents seed _segment_frames so the sub-threshold onset audio that
+        # preceded the edge is included in what goes to ASR.
+        # pre_roll_frames=0 disables the pre-roll (empty deque, maxlen=1 avoids
+        # the ValueError Python raises for deque(maxlen=0); the flag gates reads).
+        self._pre_roll_frames = pre_roll_frames
+        self._pre_roll: deque[AudioFrame] = (
+            deque(maxlen=pre_roll_frames) if pre_roll_frames > 0 else deque(maxlen=1)
+        )
 
         # Chain our segment-boundary hook onto whatever on_edge the VAD already had
         # (so we don't clobber a caller's instrumentation callback).
@@ -308,10 +352,20 @@ class MicSource:
             self._frames_seen += 1
             # The VAD classifies this frame and may fire on_speech_start /
             # on_speech_end (→ self._on_edge), flipping _in_segment for *this*
-            # frame onward. Process first, then decide whether to keep the frame.
+            # frame onward. Process first so that when speech_start fires,
+            # _on_edge seeds _segment_frames from the pre-roll — which at this
+            # point contains the frames that came *before* this frame (the onset
+            # audio below the VAD threshold). The current frame enters the
+            # segment through the normal append below.
             self._vad.process_frame(frame)
             if self._in_segment:
                 self._segment_frames.append(frame)
+            # After VAD, add this frame to the pre-roll so it is available as
+            # lookback context for the *next* speech_start edge. Inside a
+            # segment the deque fills with in-segment frames, but _on_edge
+            # clears it when the next speech_start fires, so no bleed-over.
+            if self._pre_roll_frames > 0:
+                self._pre_roll.append(frame)
             # A speech-end edge during process_frame stashed a pending utterance.
             utt = self._take_pending_utterance()
             if utt is not None:
@@ -332,7 +386,17 @@ class MicSource:
             self._prev_on_edge(edge)
         if edge == "speech_start":
             self._in_segment = True
-            self._segment_frames = []
+            # Seed the segment with pre-roll frames (T-506: onset recovery).
+            # The deque holds the K frames immediately before this edge, which
+            # are the sub-threshold onset audio the VAD hadn't confirmed as
+            # speech yet. Including them restores the dropped sentence start.
+            # After seeding, clear the deque so mid-segment frames don't bleed
+            # into the next segment's pre-roll window.
+            if self._pre_roll_frames > 0:
+                self._segment_frames = list(self._pre_roll)
+                self._pre_roll.clear()
+            else:
+                self._segment_frames = []
         elif edge == "speech_end":
             self._close_segment()
 

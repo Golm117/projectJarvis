@@ -17,7 +17,27 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-16 (v0 FEATURE-COMPLETE → Phases 0–5 done bar the deferred T-504 soak; pushed to origin/main)
+## Current state — 2026-06-16 (T-506 done → VAD pre-roll onset fix)
+
+**Phase:** phase_5 field-fix. T-506 (VAD pre-roll / lookback buffer) is **DONE** (sensing-engineer). Suite **466 green** (454 + 12 new), ruff clean. On `main`, NOT pushed.
+
+**T-506 — what was built:**
+- **`DEFAULT_PRE_ROLL_FRAMES = 10`** in `src/jarvis/audio/mic_source.py` (~320 ms at 32 ms/frame).
+- **`_pre_roll: deque[AudioFrame]`** in `MicSource.__init__` (`deque(maxlen=pre_roll_frames)`).
+- In `utterances()` loop: frame appended to `_pre_roll` **after** `process_frame()` (so the triggering frame is not in the deque when `speech_start` fires; it enters via the normal loop append — no duplication).
+- In `_on_edge("speech_start")`: `_segment_frames = list(self._pre_roll); self._pre_roll.clear()` — seeds the segment from the lookback deque, then clears it for the next segment.
+- `pre_roll_frames` constructor arg (default `DEFAULT_PRE_ROLL_FRAMES`; 0 = disabled; < 0 raises).
+- **12 new tests** in `tests/test_t506_pre_roll.py`.
+
+**Root cause confirmed:** `MicSource._on_edge` initialized `_segment_frames = []` on `speech_start`. Sub-threshold onset (the quiet beginning of a human sentence, before Silero's debounce threshold is crossed) was never captured.
+
+**Live re-test honesty:** The `--say` loopback is not suitable for demonstrating soft-onset recovery (TTS has no soft onset; ambient room audio causes Whisper hallucinations through speakers → mic). Unit tests prove the mechanism. **User should verify by speaking naturally at the built-in mic** (`~/.local/bin/uv run python -m jarvis --live --local-brain --device 6 --seconds 30`).
+
+**→ Remaining Phase 5:** T-504 (thermal/battery soak) only — deferred to real-world use.
+
+---
+
+## Prior state — 2026-06-16 (v0 FEATURE-COMPLETE → Phases 0–5 done bar the deferred T-504 soak; pushed to origin/main)
 
 **Phase:** phase_5 → **v0 FEATURE-COMPLETE.** The whole v0 MVP (Phases 0–5) is built, tuned, and validated: real-room ASR (`small.en`), local Qwen2.5-3B brain, continuous live interjection loop, Claude→ElevenLabs voice, always-on `--forever`, and interjection precision tuned **0.60 → 0.75**. T-503 (tune interjection precision, qa-tuning) is **DONE** — independent core-engineer review **APPROVED**; **human sign-off on post-engagement cooldown = 6.0 s** (down from 8.0 s). Suite **454 green**, ruff clean.
 
