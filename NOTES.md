@@ -17,9 +17,19 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-16 (T-508 in review → graded interjection-detection rework)
+## Current state — 2026-06-16 (T-508 DONE → qa-tuning gate APPROVED)
 
-**Phase:** phase_5 field-fix. T-508 (interjection-detection overhaul) is **in review** (local-ml-engineer). Suite **523 green** (was 463+17 failing), ruff clean. On `main`, NOT pushed. **qa-tuning gate required** before marking done.
+**Phase:** phase_5 field-fix. T-508 (graded interjection-detection rework) is **DONE** — qa-tuning gate **APPROVED**. Suite **523 green**, ruff clean. On `main`, NOT pushed.
+
+**qa-tuning verdict (full record: `docs/qa/threshold-tuning.md` §7; TASKS.md T-508 Notes):**
+- **Implementation sound.** Diff confined to `ml/wall.py` (prompt+parse) + `attention_layer.py` (pre-filter). Frozen `WallVerdict` intact; `SummonController`/`TurnTakingGate`/`WallDetector`/`types.py` **byte-for-byte unchanged**. 100 model-free tests assert external behavior. Graceful fallback intact.
+- **Precision = 0.75** on the committed corpus (unchanged — the eval scores labels+config, and the fixtures carry OLD near-binary `observed_confidence`; T-508 changes how the backend *emits* confidence, not the labeled values). `ff-false-wrong-category` verified still FALSE (irreducible detector-mis-naming FP; category-mismatch scoring is confidence-independent).
+- **Floor recommendation: KEEP 0.70** (left in code; **human sign-off requested**). Now sound rather than inert: under graded confidence it admits rating-4/5 (0.80/0.95) and suppresses rating-1/2/3 (0.05/0.30/0.65). The only judgement call is whether rating-3 (0.65) wh-form/declarative gaps should speak — lowering to 0.65 is recall on a precision-first FP-limited corpus (not recommended). Sweep tables in §7.
+- **√81 honest assessment:** the brief's single flaky run did NOT reproduce — repeated live probing (8×8) found the 3B **stable**: √81 question 0.95 fires, √81 wh-form 0.65 suppressed, 4×7 0.95 fires. Pre-filter miss definitively fixed. Residual wh-form-0.65 = a WallBackend prompt lever (local-ml lane), v1, recall-not-precision — **NOT a 7B/fine-tune decision**. Flagged to orchestrator as v1 lever only.
+
+**Two human/orchestrator items (neither blocks T-508 done):** (1) confirm floor 0.70 (keep, recommended) vs 0.65; (2) wh-form rating-3 recall = v1 prompt lever, not 7B/fine-tune. **v1 carry-forward:** when a real captured corpus lands, re-capture fixtures with the graded backend so `observed_confidence` carries the graded signal (then the floor sweep runs on real graded values, not the modeled projection in §7.3).
+
+### Prior — T-508 build (local-ml-engineer)
 
 **T-508 — what was built:**
 - `src/jarvis/ml/wall.py`: graded 1–5 rating replaces near-binary confidence. `rating_to_confidence()` table (1→0.05, 2→0.30, 3→0.65, 4→0.80, 5→0.95). `is_wall` from `rating>=3`. Information-Gap CoT reasoning step. Six failure-case exemplars. `max_tokens` raised 120→200.

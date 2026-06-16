@@ -182,6 +182,151 @@ corpus. The lever was context (the cooldown), and that is where the work went.
 
 ---
 
+## 7. T-508 — graded confidence: floor RE-VALIDATION (qa-tuning review)
+
+> **Status:** qa-tuning gate of T-508 (graded interjection-worthiness rework of
+> `QwenWallBackend`). T-508 makes `WallVerdict.confidence` genuinely graded
+> (rating 1→0.05 … 5→0.95; `is_wall = rating>=3`), so the 0.70 floor — **inert**
+> under the old near-binary backend (§1) — can now do real work. This section
+> records the re-validation and the floor **recommendation** for human sign-off.
+> **The floor value is left at 0.70 in code** (a user-visible success-metric
+> threshold — same sign-off pattern as the T-503 cooldown). Recommendation only.
+
+### 7.1 Precision on the current fixtures is unchanged: **0.75**
+
+The eval scores **labels + config**, building each verdict from the fixture's
+`observed_confidence` — which was captured from the *old* near-binary backend
+(~0.85–0.95). Re-running the committed corpus at the shipped config still gives
+**precision 0.75** (4 fires, 3 useful; the lone false fire is
+`ff-false-wrong-category`). T-508 changes *how the backend produces* confidence,
+not the already-labeled fixture values, so the corpus number is stable — as
+expected. The floor's *new* leverage only shows once fixtures carry graded
+confidence (7.3).
+
+### 7.2 Floor sweep on the **current** (old near-binary) fixtures — still inert
+
+```
+ floor | fires | useful | false | precision
+  0.00 |     5 |      4 |     1 |   0.800
+  0.55 |     5 |      4 |     1 |   0.800
+  0.60 |     4 |      3 |     1 |   0.750
+  0.70 |     4 |      3 |     1 |   0.750   ← shipped
+  0.85 |     4 |      3 |     1 |   0.750
+  0.90 |     3 |      2 |     1 |   0.667
+  0.95 |     2 |      1 |     1 |   0.500
+ ≥0.96 |     0 |      — |     — |     n/a
+```
+
+The FP (`ff-false-wrong-category @ 0.95`) and the strongest TPs (`@ 0.95`) still
+move **together** at every floor — the §1 finding, unchanged, because the fixtures
+still hold near-binary values.
+
+### 7.3 Floor sweep on **modeled graded** confidence — the floor *can* now do work
+
+Projecting each candidate's confidence to what the T-508 backend would emit
+(strong group-directed question → rating 5/0.95; declarative borderline → rating
+3/0.65; the post-summon FP → rating 1/0.05; the thinking-pause FP → rating 2/0.30;
+the wrong-category FP modeled at the model's confidence in its *wrong* read):
+
+```
+ floor | fires | useful | false | precision | residual false fire
+  0.00 |     5 |      4 |     1 |   0.800   | ff-false-wrong-category
+  0.65 |     5 |      4 |     1 |   0.800   | ff-false-wrong-category
+  0.70 |     4 |      3 |     1 |   0.750   | ff-false-wrong-category   ← shipped
+  0.80 |     4 |      3 |     1 |   0.750   | ff-false-wrong-category
+  0.85 |     3 |      3 |     0 |   1.000   | (none)
+```
+
+Two things this shows:
+1. Graded confidence makes the floor a **real gate** between rating tiers — the
+   §1 "inert" verdict is now *backend-version-specific*, and T-508 lifts it.
+2. The precision=1.0 at floor ≥ 0.85 is a **modeling artifact, not a
+   recommendation.** It only appears because I modeled the wrong-category FP's
+   confidence at 0.80. That FP is a **detector-correctness** failure (a real
+   `stuck_point` mis-named `factual_gap`), and the model's confidence in its
+   *wrong* read is unknowable — it could just as easily be 0.95. **You cannot
+   threshold your way out of a wrong-category fire**, and chasing a 0.85 floor to
+   suppress this one fixture would (a) ride on an assumption about the model's
+   self-confidence and (b) suppress every legitimate rating-4 fire (0.80) in real
+   use — a large recall cost for one mislabeled corpus row.
+
+### 7.4 The borderline question: should rating-3 (0.65) fire?
+
+This is the substantive floor decision now that confidence is graded. The live
+backend (8/8 repeated probes, 2026-06-16, this review) is **stable**:
+
+| probe | live rating → confidence | at floor 0.70 |
+|---|---|---|
+| "What's the square root of 81?" (question) | 5 → **0.95** ×8/8 | **fires** |
+| "I wonder what the square root of 81 is." (wh-form) | 3 → **0.65** ×8/8 | **suppressed** |
+| "What's 4 times 7?" | 5 → **0.95** ×8/8 | fires |
+| "What do you need?" (post-summon) | 1 → 0.05 | suppressed (✓) |
+| "I wonder if my volume is too loud." | 1 → 0.05 | suppressed (✓) |
+| "I don't remember the date we picked." | 3 → 0.65 | suppressed |
+
+Rating 3 = 0.65 sits **just below** 0.70. The decision is whether the bar admits
+rating-3 borderlines:
+
+- **Keep 0.70 (precision-first) — RECOMMENDED.** Only rating-4/5 fire; rating-3
+  ("I wonder what X is", declarative "I don't remember Y") stays silent. This is
+  faithful to the success metric (a false fire is costly, a miss is cheap) and to
+  the explicit exemplar design: rating 3 is the *borderline / weak-signal* tier the
+  prompt itself flags with caution. The two suppressed cases above are genuinely
+  marginal — a wh-form musing and a declarative gap with no explicit question.
+  Suppressing them is the correct precision-first call.
+- **Lower to ~0.65 (admit rating-3).** Would let the wh-form √81 and declarative
+  gaps fire. This is a **recall** move on a **precision** metric, and the corpus
+  is FP-limited not recall-limited (§5). It also narrows the floor's margin against
+  any future rating-3-confident FP. Not recommended for v0.
+- **Raise to ~0.75 (require rating-4+).** No effect vs 0.70 on the live tiers
+  (nothing lands in (0.70, 0.80)), so it buys no precision while looking stricter.
+  Cosmetic; not recommended.
+
+**Recommendation: keep `interjection_confidence_floor = 0.70`** — but now for a
+*sound* reason, not because it is inert. Under graded confidence it cleanly admits
+rating-4/5 (0.80/0.95) and suppresses rating-1/2/3 (0.05/0.30/0.65), which is
+exactly the precision-first boundary we want: only strong, group-directed,
+clearly-answerable gaps fire. The √81 *question* form fires reliably (0.95×8/8);
+the √81 *wh-form* (0.65) staying silent is acceptable precision-first behavior, not
+a regression. **Human sign-off requested to confirm 0.70 (keep) vs lowering to
+0.65** — the only judgement call is whether wh-form/declarative rating-3 gaps
+should speak. I recommend keep.
+
+### 7.5 `ff-false-wrong-category` still scores FALSE under graded confidence ✓
+
+Verified in isolation: the fixture fires `factual_gap @ 0.95` against a ground-truth
+`stuck_point` candidate; the runner scores by **category match** (independent of
+confidence — `runner.py` `_score`), so the fired `factual_gap` ≠ ground-truth
+`stuck_point` → **false**, unchanged. Graded confidence does not alter this; it
+remains the correctly-scored, irreducible detector-mis-naming FP that caps the set
+at 0.75. (Live note: the current 3B no longer reproduces this mis-fire on the
+fixture's phrasing — it rates "going in circles, I'm stuck" a 2 → `none @ 0.30`,
+i.e. it now *misses* rather than mis-names. The fixture is kept as a regression
+guard for the historically-observed wrong-category fire, which is the correct eval
+posture.)
+
+### 7.6 √81 reliability — honest assessment (this review)
+
+The brief reported a single non-deterministic run (√81 rated 3, wh-form rated 2).
+**Repeated live probing (8×8, this review) found the opposite — the backend is
+now stable**, not flaky: the √81 *question* form is 8/8 rating-5 (0.95) and fires;
+the wh-form is 8/8 rating-3 (0.65). The earlier "non-determinism" looks like one
+unlucky draw, not a persistent reliability gap. The pre-filter miss (the actual
+T-508 root cause) is **definitively fixed** — the wh-form now reaches the model
+every time.
+
+**Is the residual wh-form 0.65 fixable in qa's lane?** The remaining gap is purely
+that the 3B rates the *wh-form* √81 a 3 not a 4. Whether to lift that is a
+WallBackend **prompt** change (more/stronger exemplars for wh-form gaps), which is
+**local-ml-engineer's lane**, not a qa threshold — and it is recall work on a
+precision-first metric, so it is **not** a v0 blocker. If a captured corpus later
+shows wh-form gaps are a common, useful, well-timed wall, revisit with a prompt
+change (and re-measure precision when adding them). **Flagged to the orchestrator
+as a possible v1 lever; 7B escalation / fine-tuning is NOT warranted by this
+evidence** — the model is consistent and the question form already fires reliably.
+
+---
+
 ## 6. How to re-run
 
 ```bash

@@ -2,6 +2,31 @@
 
 _(scratchpad for in-flight thinking; promote durable findings to topic files)_
 
+## T-508 graded-detection gate — APPROVED (2026-06-16)
+
+Durable record: `docs/qa/threshold-tuning.md` §7. Implementation sound — diff
+confined to `ml/wall.py` (prompt+parse) + `attention_layer.py` (pre-filter);
+gated modules (SummonController/TurnTakingGate/WallDetector/types.py) byte-for-byte
+unchanged; frozen `WallVerdict` intact; 523 green, ruff clean.
+
+Key insight for future me: the eval scores **labels + config**, so the committed
+corpus precision is **stable at 0.75** across T-508 — T-508 changes how the backend
+*emits* confidence, not the fixtures' captured `observed_confidence`. The floor's
+new leverage only appears on a *modeled-graded* sweep (§7.3). That modeled sweep hits
+1.0 at floor ≥ 0.85 but that's an **artifact** of how I modeled the wrong-category
+FP's self-confidence — DON'T recommend 0.85; the wrong-category fire is a
+detector-correctness problem you can't threshold away, and 0.85 would kill every
+real rating-4 fire.
+
+Floor recommendation: **keep 0.70** (left in code; human sign-off pending). Now sound
+not inert: admits rating-4/5, suppresses 1/2/3. The live 3B is **stable** (8×8 probes):
+√81 question 0.95 fires, √81 wh-form 0.65 suppressed, 4×7 0.95 fires, WDYN/musing 0.05.
+Brief's "non-determinism" did not reproduce. Residual wh-form-0.65 = prompt lever
+(local-ml lane), v1, NOT 7B/fine-tune. **v1 carry-forward:** when a real captured
+corpus lands, RE-CAPTURE fixtures with the graded backend (`--capture`) so
+`observed_confidence` carries the graded signal — then the floor sweep runs on real
+graded values, not the modeled projection.
+
 ## T-502 capture-and-label tooling + precision eval runner — DONE (2026-06-16)
 
 Built the bridge from a live run to a precision number. Durable doc:
