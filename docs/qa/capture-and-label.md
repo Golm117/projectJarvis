@@ -165,16 +165,26 @@ defaults (politeness gap 2.0 s, floor 0.70):
 | Fixture | Behavior | Fires | Useful | Notes |
 |---|---|---:|---:|---|
 | `seed-useful-factual-gap` | live TP: "What was the date of the conference again?" | 1 | 1 | clean opening |
-| `seed-false-what-do-you-need` | live FP: "What do you need?" @ 0.95 in a summon exchange | 1 | 0 | **labeled FALSE — see below** |
+| `seed-false-what-do-you-need` | live FP: "What do you need?" @ 0.95 in a summon exchange | 0 | — | **labeled FALSE; T-503 cooldown suppresses it** |
 | `seed-summon-excluded` | Path-A summon | 0 | — | excluded from precision |
 | `ff-useful-unanswered-question` | clean useful fire | 1 | 1 | |
 | `ff-false-thinking-pause` | resumes before the gap | 0 | — | abort removes a would-be FP |
-| `ff-false-wrong-category` | real `stuck_point`, fires `factual_gap` | 1 | 0 | wrong-category → false |
+| `ff-false-wrong-category` | real `stuck_point`, fires `factual_gap` | 1 | 0 | wrong-category → false (not a tunable FP) |
 | `ff-backoff-no-nag` | same wall twice | 1 | 1 | repeat suppressed (c2 a miss) |
 | `ff-below-floor` | wall at 0.55 < floor | 0 | — | a miss; lower the floor to make it fire |
+| `ff-false-stale-pending-wall` | wall cached, opening only after 12 s TTL | 0 | — | **T-503 TTL drops the stale wall** |
 
-**Aggregate: 5 fires, 3 useful → precision 0.60**, factual_gap over-firing (2 of 4
-fires) — demonstrably < 1.0 because the false positives are present and counted.
+**Aggregate after T-503: 4 fires, 3 useful → precision 0.75** (up from the pre-tune
+0.60). The post-engagement cooldown suppresses the "What do you need?" FP and the
+pending-wall TTL drops the stale-wall FP; the one remaining false fire is the
+wrong-category case (a detector mis-naming no orchestrator/threshold lever can fix
+— 0.75 is the achievable ceiling on this set). See `docs/qa/threshold-tuning.md`
+for the full sweep + the suppression/TTL design.
+
+> **Pre-T-503 baseline (for the record): 5 fires, 3 useful → 0.60.** The
+> `seed-false-what-do-you-need` timeline gained an `engagement` moment (schema v2)
+> at T-503 so the cooldown can model the just-engaged context, and the
+> `ff-false-stale-pending-wall` fixture was added for the TTL.
 
 ### qa verdict on "What do you need?" → **FALSE**
 
@@ -212,9 +222,9 @@ are constructor-injected (verified in the T-006/T-007 reviews), the sweep change
 only the injected `Config` — no code edit. `test_config_sweep_changes_the_outcome`
 pins this lever (lowering the floor turns the below-floor miss into a fire).
 
-**Carry-forward staleness fixture (from the T-302/T-303 review, NOTES):** T-503
-should add a staleness case — a wall cached across several off-topic turns then a
-late silence — and decide whether `_pending_wall` needs a TTL / topic-shift
-clear. That would be a `SummonController`/orchestrator-policy change (qa-gated),
-not a threshold sweep. The schema already supports it (a long timeline with a
-late candidate window); it is flagged here for T-503 to author + judge.
+**Carry-forward staleness fixture (from the T-302/T-303 review, NOTES) — DONE in
+T-503.** Added `ff-false-stale-pending-wall` (a wall cached at t=0, opening only at
+t=15) + a configurable `_pending_wall` TTL on `AttentionLayer` (default 12 s) that
+drops a cached wall once it has waited past the TTL. The eval models it via the
+candidate's `wall_detected_at` anchor + the `config.pending_wall_ttl_seconds`
+knob. Full design + the sweep in `docs/qa/threshold-tuning.md`.

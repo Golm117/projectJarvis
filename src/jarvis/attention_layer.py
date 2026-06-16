@@ -76,6 +76,35 @@ from jarvis.types import EngagementHandoff, Interjection, SummonDecision, Uttera
 # The wake word that fires Path A (summon). Ported from the prototype's WAKE_WORD.
 WAKE_WORD = "jarvis"
 
+# Post-engagement cooldown (T-503, the interjection-precision fix). After Jarvis
+# engages on EITHER path (a wake-word summon or a fired interjection), the user is
+# in a dialogue *with* Jarvis — not hitting a wall *between humans* — so an ambient
+# Path-B interjection in the seconds that follow is noise, not help. The classic
+# case (NOTES T-502): the user summons Jarvis, then says "What do you need?", which
+# the detector flags as factual_gap @ 0.95 and would fire on — a false interjection
+# (Jarvis offering to look up its own near-rhetorical question). This window
+# suppresses ambient Path-B fires for a short, configurable interval after an
+# engagement. Calibrated on the eval (T-503): 8.0 s kills the seeded FP without
+# touching any legitimate fire (all seeded TPs are stand-alone walls with no
+# preceding engagement). Constructor-injected so qa-tuning owns the value in one
+# place; measured on the SimulatedClock, never a real sleep. A value of 0.0
+# disables the rule (no suppression window).
+DEFAULT_POST_ENGAGEMENT_COOLDOWN_SECONDS = 8.0
+
+# Pending-wall staleness TTL (T-503, carry-forward from the T-302/T-303 review).
+# tick() caches the wall verdict from the last ingest and re-evaluates it during
+# the silence that follows, fire-at-most-once. The replace-with-fresher-wall and
+# clear-on-engagement policies bound it in practice, but a wall cached while the
+# conversation quietly moves on (no fresh wall to replace it, no engagement to
+# clear it) could in theory fire *late*, once a silence finally opens, as a stale
+# false interjection about a topic that has passed. This TTL ages a cached pending
+# wall out: once it has waited this long without firing, tick() drops it. Sized
+# (12.0 s) well beyond the 2 s politeness gap a legitimate wall fires within, so a
+# real wall always fires long before its TTL — the TTL only ever catches a wall
+# that has genuinely gone stale. Constructor-injected (qa-tuning owns it); measured
+# on the SimulatedClock. A value of 0.0 disables the TTL (no staleness clear).
+DEFAULT_PENDING_WALL_TTL_SECONDS = 12.0
+
 # Window sizing for the orchestrator (ported from the prototype's tunables). Note
 # the T-004 window-sizing gotcha: a topic shift only registers once the *old*
 # topic's utterances roll out of the window. These bounds are wide enough to hold
@@ -134,6 +163,9 @@ class AttentionLayer:
         controller: SummonController,
         responder: EngagedResponder,
         voice: VoiceOutput,
+        now: Callable[[], float] | None = None,
+        post_engagement_cooldown_seconds: float = DEFAULT_POST_ENGAGEMENT_COOLDOWN_SECONDS,
+        pending_wall_ttl_seconds: float = DEFAULT_PENDING_WALL_TTL_SECONDS,
         on_summary_update: Callable[[str], None] | None = None,
         on_interjection: Callable[[Interjection], None] | None = None,
         on_engagement: Callable[[EngagementHandoff], None] | None = None,
@@ -148,6 +180,29 @@ class AttentionLayer:
         self._on_interjection = on_interjection
         self._on_engagement = on_engagement
 
+        if post_engagement_cooldown_seconds < 0:
+            raise ValueError(
+                "post_engagement_cooldown_seconds must be >= 0, got "
+                f"{post_engagement_cooldown_seconds}"
+            )
+        if pending_wall_ttl_seconds < 0:
+            raise ValueError(
+                f"pending_wall_ttl_seconds must be >= 0, got {pending_wall_ttl_seconds}"
+            )
+        # The single injected clock (the same time.monotonic / SimulatedClock the
+        # gate + window already share — the one-clock invariant). Used ONLY to age
+        # the two T-503 timers below (cooldown + pending-wall TTL); the speak/abort
+        # timing still comes through the gate's predicates, never from here. None ⇒
+        # both T-503 timers are inert (legacy callers that pass no clock keep the
+        # pre-T-503 behavior); both default to a real value via build()/run_scripted.
+        self._now = now
+        self._post_engagement_cooldown = float(post_engagement_cooldown_seconds)
+        self._pending_wall_ttl = float(pending_wall_ttl_seconds)
+        # When Jarvis last engaged (either path), on the injected clock. None ⇒ never
+        # engaged yet. The post-engagement cooldown suppresses ambient Path-B fires
+        # while now() - _last_engagement_at < _post_engagement_cooldown (T-503).
+        self._last_engagement_at: float | None = None
+
         # T-302: the pending wall verdict from the most recent ingest that returned
         # None (gap not yet open) and whose verdict.is_wall is True.  tick() re-
         # evaluates this verdict periodically during the silence that follows.
@@ -157,6 +212,7 @@ class AttentionLayer:
         #   - Cleared when: the verdict fires (Path B engaged) — fire-at-most-once.
         #   - Replaced when: a newer wall verdict arrives at ingest (fresher context wins).
         #   - Cleared when: Path A (summon) fires via _engage — engagement ended the ambient half.
+        #   - Cleared when: the pending wall's TTL elapses (T-503 staleness clear) — see tick().
         #   - NOT cached: non-wall verdicts (verdict.is_wall is False); nothing to wait for.
         #
         # The same WallVerdict object is reused across all tick() calls so the
@@ -164,6 +220,12 @@ class AttentionLayer:
         # Qwen offer double-fire found in NOTES.md T-204 live run.  No new model call
         # is made during the silence window; the cached verdict is what is re-evaluated.
         self._pending_wall: WallVerdict | None = None
+        # When _pending_wall was cached, on the injected clock — the start of its
+        # TTL. None whenever _pending_wall is None. tick() drops a pending wall once
+        # now() - _pending_wall_cached_at >= _pending_wall_ttl, so a wall cached
+        # across many off-topic turns can't fire late as a stale false interjection
+        # after the conversation has moved on (T-503 carry-forward from T-302/T-303).
+        self._pending_wall_cached_at: float | None = None
 
     # -- the one public ingest path ------------------------------------------
 
@@ -193,15 +255,21 @@ class AttentionLayer:
         # the (Phase-2 model) detector doesn't run on every utterance.
         if _has_wall_signal(u.text):
             verdict = self._detector.detect(self._window.transcript(), self._summary.text)
+            # T-503 post-engagement cooldown: inside the window after Jarvis engaged,
+            # an ambient wall is the user talking *to* Jarvis, not a wall *between*
+            # humans — suppress it. Checked before consider_interjection so a
+            # suppressed wall is neither fired nor cached (it does not arm tick()).
+            if verdict.is_wall and self._in_post_engagement_cooldown():
+                return
             decision = self._controller.consider_interjection(verdict)
             if decision is not None:
-                self._pending_wall = None  # consumed by Path B fire
+                self._clear_pending_wall()  # consumed by Path B fire
                 self._interject(decision)
             elif verdict.is_wall:
                 # Gap not yet open (or speech resumed), but a real wall was detected.
                 # Cache it so tick() can re-evaluate once the politeness gap opens.
                 # A newer wall at the next ingest will replace this one (fresher wins).
-                self._pending_wall = verdict
+                self._cache_pending_wall(verdict)
             # Non-wall verdicts (is_wall=False) are not cached — nothing to wait for.
 
     # -- T-302: continuous Path-B re-evaluation during silence ----------------
@@ -238,13 +306,68 @@ class AttentionLayer:
           method with no locking.  The caller (``live.py``'s daemon thread) wraps
           both ``ingest`` and ``tick`` calls in a shared ``threading.Lock`` so the
           two threads never interleave.
+
+        T-503 additions (both gated on the injected clock; inert if no clock /
+        the knob is 0.0, preserving the pre-T-503 behavior):
+
+        * **Staleness TTL.** A pending wall that has waited longer than
+          ``pending_wall_ttl_seconds`` without firing is dropped here, so a wall
+          cached while the conversation quietly moved on can't fire late as a stale
+          false interjection.
+        * **Post-engagement cooldown.** A pending wall is not fired while still
+          inside the cooldown after an engagement (the same suppression ``ingest``
+          applies) — it is held (not dropped), so it can still fire once the
+          cooldown passes, unless its TTL drops it first.
         """
         if self._pending_wall is None:
             return
+        if self._pending_wall_is_stale():
+            self._clear_pending_wall()  # T-503: aged out — drop the stale wall
+            return
+        if self._in_post_engagement_cooldown():
+            return  # T-503: hold (don't fire) during the post-engagement window
         decision = self._controller.consider_interjection(self._pending_wall)
         if decision is not None:
-            self._pending_wall = None  # consumed — fire at most once
+            self._clear_pending_wall()  # consumed — fire at most once
             self._interject(decision)
+
+    # -- T-503 timers (post-engagement cooldown + pending-wall TTL) ------------
+
+    def _in_post_engagement_cooldown(self) -> bool:
+        """Whether an ambient Path-B fire is currently suppressed by the cooldown.
+
+        ``True`` when Jarvis engaged within the last ``post_engagement_cooldown``
+        seconds on the injected clock. Inert (always ``False``) when no clock was
+        injected, the cooldown is 0.0, or no engagement has happened yet.
+        """
+        if self._now is None or self._post_engagement_cooldown <= 0.0:
+            return False
+        if self._last_engagement_at is None:
+            return False
+        return (self._now() - self._last_engagement_at) < self._post_engagement_cooldown
+
+    def _pending_wall_is_stale(self) -> bool:
+        """Whether the cached pending wall has outlived its TTL (T-503).
+
+        ``True`` once the wall has been cached for at least ``pending_wall_ttl``
+        seconds on the injected clock. Inert when no clock was injected, the TTL is
+        0.0, or nothing is cached.
+        """
+        if self._now is None or self._pending_wall_ttl <= 0.0:
+            return False
+        if self._pending_wall_cached_at is None:
+            return False
+        return (self._now() - self._pending_wall_cached_at) >= self._pending_wall_ttl
+
+    def _cache_pending_wall(self, verdict: WallVerdict) -> None:
+        """Cache a wall for tick() re-evaluation, stamping its TTL start (T-503)."""
+        self._pending_wall = verdict
+        self._pending_wall_cached_at = None if self._now is None else self._now()
+
+    def _clear_pending_wall(self) -> None:
+        """Clear the cached pending wall + its TTL stamp (single clearing point)."""
+        self._pending_wall = None
+        self._pending_wall_cached_at = None
 
     # -- engagement: assemble the handoff + dispatch to the engaged half ------
 
@@ -273,8 +396,16 @@ class AttentionLayer:
         T-302: Clears ``_pending_wall`` on any engagement (Path A or Path B).
         Once Jarvis has engaged on any path, the ambient half is done for this turn
         and there is no wall worth waiting on — the wall's context has been consumed.
+
+        T-503: Stamps ``_last_engagement_at`` from the injected clock so the
+        post-engagement cooldown can suppress ambient Path-B fires in the window
+        that follows. Both a wake-word summon and a fired interjection are
+        engagements, so both arm the cooldown — after either, the user is in a
+        dialogue *with* Jarvis.
         """
-        self._pending_wall = None  # consumed — ambient half done for this turn
+        self._clear_pending_wall()  # consumed — ambient half done for this turn
+        if self._now is not None:
+            self._last_engagement_at = self._now()  # T-503: arm the cooldown
         handoff = EngagementHandoff(
             trigger_reason=decision.handoff_reason(),
             summary=self._summary.text,
@@ -306,6 +437,8 @@ class AttentionLayer:
         max_utterances: int = DEFAULT_WINDOW_MAX_UTTERANCES,
         max_seconds: float = DEFAULT_WINDOW_MAX_SECONDS,
         interjection_confidence_floor: float | None = None,
+        post_engagement_cooldown_seconds: float = DEFAULT_POST_ENGAGEMENT_COOLDOWN_SECONDS,
+        pending_wall_ttl_seconds: float = DEFAULT_PENDING_WALL_TTL_SECONDS,
         on_summary_update: Callable[[str], None] | None = None,
         on_interjection: Callable[[Interjection], None] | None = None,
         on_engagement: Callable[[EngagementHandoff], None] | None = None,
@@ -317,6 +450,11 @@ class AttentionLayer:
         backends to go live. The ``SummonController`` is built on the **given
         gate**, which the caller (e.g. ``run_scripted`` / a ``MicSource``) is
         responsible for driving with speech-boundary events on the same ``now``.
+
+        The same ``now`` is injected into the layer (alongside the window + gate)
+        so the T-503 post-engagement cooldown + pending-wall TTL age on the one
+        shared clock (the one-clock invariant). Their defaults are the calibrated
+        T-503 values; pass 0.0 to either to disable that rule.
         """
         window = RollingWindow(max_utterances, max_seconds, now)
         summary = LivingSummary(summarizer_backend or HeuristicSummarizerBackend())
@@ -332,6 +470,9 @@ class AttentionLayer:
             controller=controller,
             responder=responder,
             voice=voice,
+            now=now,
+            post_engagement_cooldown_seconds=post_engagement_cooldown_seconds,
+            pending_wall_ttl_seconds=pending_wall_ttl_seconds,
             on_summary_update=on_summary_update,
             on_interjection=on_interjection,
             on_engagement=on_engagement,
@@ -357,6 +498,8 @@ class AttentionLayer:
         max_utterances: int = DEFAULT_WINDOW_MAX_UTTERANCES,
         max_seconds: float = DEFAULT_WINDOW_MAX_SECONDS,
         interjection_confidence_floor: float | None = None,
+        post_engagement_cooldown_seconds: float = DEFAULT_POST_ENGAGEMENT_COOLDOWN_SECONDS,
+        pending_wall_ttl_seconds: float = DEFAULT_PENDING_WALL_TTL_SECONDS,
         on_summary_update: Callable[[str], None] | None = None,
         on_interjection: Callable[[Interjection], None] | None = None,
         on_engagement: Callable[[EngagementHandoff], None] | None = None,
@@ -388,6 +531,8 @@ class AttentionLayer:
             max_utterances=max_utterances,
             max_seconds=max_seconds,
             interjection_confidence_floor=interjection_confidence_floor,
+            post_engagement_cooldown_seconds=post_engagement_cooldown_seconds,
+            pending_wall_ttl_seconds=pending_wall_ttl_seconds,
             on_summary_update=on_summary_update,
             on_interjection=on_interjection,
             on_engagement=on_engagement,

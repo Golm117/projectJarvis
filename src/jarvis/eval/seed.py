@@ -83,6 +83,10 @@ def _end(t: float) -> Moment:
     return Moment(t=t, kind=MomentKind.SPEECH_END)
 
 
+def _engaged(t: float) -> Moment:
+    return Moment(t=t, kind=MomentKind.ENGAGEMENT)
+
+
 # ---------------------------------------------------------------------------
 # Real-session fixtures (distilled from this session's live runs)
 # ---------------------------------------------------------------------------
@@ -136,27 +140,38 @@ def seed_false_what_do_you_need() -> Fixture:
         description=(
             "Borderline FP observed this session: 'What do you need?' detected as "
             "factual_gap @ 0.95 during a summon exchange — a fire here is a false "
-            "interjection (the question is addressed to Jarvis, not an unanswered wall)."
+            "interjection (the question is addressed to Jarvis, not an unanswered wall). "
+            "The timeline encodes the preceding engagement (the user just summoned "
+            "Jarvis) so the T-503 post-engagement cooldown can suppress the fire."
         ),
         source="seeded from live runs (qa verdict: FALSE — see jarvis.eval.seed docstring)",
         config=_DEFAULT_CONFIG,
         timeline=[
+            # The user summons Jarvis → an engagement at t=0 (Path A; the summon
+            # utterance itself is excluded from precision, but the engagement is what
+            # arms the cooldown). Then the "What do you need?" turn surfaces ~2 s
+            # later — well inside the post-engagement cooldown.
             _start(0.0),
-            _utt(0.0, "A", "What do you need?"),
-            _end(1.5),  # short pause; clean opening follows
+            _utt(0.0, "A", "Jarvis, what's the weather?"),
+            _engaged(0.0),  # summon engages immediately (Path A)
+            _end(1.0),
+            _start(2.0),
+            _utt(2.0, "A", "What do you need?"),
+            _end(3.5),  # short pause; clean opening follows
         ],
         candidates=[
             Candidate(
                 candidate_id="c1",
-                match_from=1.5,
-                match_to=8.0,
+                match_from=3.5,
+                match_to=10.0,
                 wall=True,
                 category="factual_gap",
                 label=Label.FALSE,
                 rationale=(
                     "Question is directed AT Jarvis inside a just-engaged exchange, not "
                     "an unanswered gap among speakers. Offering to look it up is noise. "
-                    "Precision-first: borderline → FALSE in the yardstick."
+                    "Precision-first: borderline → FALSE in the yardstick. T-503: the "
+                    "post-engagement cooldown (engagement at t=0) suppresses this fire."
                 ),
                 observed_confidence=0.95,
                 observed_offer="Want me to help with that?",
@@ -373,6 +388,70 @@ def ff_below_floor() -> Fixture:
     )
 
 
+def ff_false_stale_pending_wall() -> Fixture:
+    """A wall cached during silence, but no clean opening arrives until *after* the
+    pending-wall TTL — a late fire here would be a stale false interjection (T-503).
+
+    Models the T-302/T-303 carry-forward: the continuous loop caches the wall and
+    re-evaluates it during silence, but the conversation has genuinely moved on, so
+    the politeness gap only opens long after the wall is fresh. The first clean
+    opening lands past the 12 s TTL → ``AttentionLayer.tick()`` drops the stale
+    wall → no fire. Without the TTL this would fire late as noise about a passed
+    topic. Labeled FALSE: a fire in this late window is a precision error.
+    """
+    return Fixture(
+        fixture_id="ff-false-stale-pending-wall",
+        description=(
+            "A factual_gap wall is cached, but no clean ~2 s opening arrives until "
+            "after the 12 s pending-wall TTL (the conversation moved on). A late fire "
+            "would be a stale false interjection — the T-503 TTL drops it first."
+        ),
+        source="T-503 staleness fixture (carry-forward from T-302/T-303 review)",
+        config=_DEFAULT_CONFIG,
+        timeline=[
+            # The wall surfaces, but speech keeps going (chatter, no clean gap) so the
+            # wall is cached and never gets its opening while fresh.
+            _start(0.0),
+            _utt(0.0, "A", "What was that vendor's name? Anyway, moving on —"),
+            _end(0.5),  # too short to fire (< politeness gap); wall is cached
+            _start(0.8),
+            _utt(0.8, "A", "let's talk about the launch plan instead."),
+            _end(1.3),
+            _start(1.6),
+            _utt(1.6, "B", "Right, the launch. I think we ship Tuesday."),
+            _end(2.1),
+            _start(2.4),
+            _utt(2.4, "B", "And we should line up the press release too."),
+            # A clean opening finally arrives — but only at t=15, past the 12 s TTL.
+            _end(15.0),
+        ],
+        candidates=[
+            Candidate(
+                candidate_id="c1",
+                # The only clean opening is the late one (>= TTL from the wall at t=0).
+                match_from=15.0,
+                match_to=20.0,
+                wall=True,
+                category="factual_gap",
+                label=Label.FALSE,
+                # The wall was cached when it surfaced at t=0; its only opening is at
+                # t=15, so the TTL (12 s, aged from here) expires first → stale drop.
+                wall_detected_at=0.0,
+                rationale=(
+                    "The wall went stale: its only clean opening lands ~15 s after it "
+                    "surfaced, long after the conversation moved to the launch plan. A "
+                    "fire here is a late false interjection about a passed topic — the "
+                    "T-503 pending-wall TTL (12 s) drops it before it can fire."
+                ),
+                observed_confidence=0.90,
+                observed_offer="Want me to find the vendor?",
+                observed_fired=False,
+                observed_drop_reason="pending-wall TTL expired (stale)",
+            )
+        ],
+    )
+
+
 def seed_fixtures() -> list[Fixture]:
     """Every seeded fixture (real-session + behavior illustrations)."""
     return [
@@ -384,6 +463,7 @@ def seed_fixtures() -> list[Fixture]:
         ff_false_wrong_category(),
         ff_backoff_no_nag(),
         ff_below_floor(),
+        ff_false_stale_pending_wall(),
     ]
 
 

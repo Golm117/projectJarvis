@@ -1,12 +1,14 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "fixture_id": "ff-false-wrong-category",
   "description": "A real stuck_point wall with a clean opening, but the (mis-firing) verdict carries category factual_gap \u2192 a fire matches the moment but mismatches category \u2192 scored FALSE.",
   "source": "eval-plan illustrative #3",
   "config": {
     "settle_seconds": 0.6,
     "politeness_gap_seconds": 2.0,
-    "interjection_confidence_floor": 0.7
+    "interjection_confidence_floor": 0.7,
+    "post_engagement_cooldown_seconds": 8.0,
+    "pending_wall_ttl_seconds": 12.0
   },
   "timeline": [
     {
@@ -33,6 +35,7 @@
       "category": "stuck_point",
       "label": "useful",
       "rationale": "Real stuck_point, but a factual_gap fire is the wrong offer \u2192 false.",
+      "wall_detected_at": null,
       "observed_confidence": 0.95,
       "observed_offer": "Want me to look that up?",
       "observed_category": "factual_gap",

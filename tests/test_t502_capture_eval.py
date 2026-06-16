@@ -377,21 +377,55 @@ def test_wrong_category_fire_scores_false():
 
 
 def test_seeded_corpus_scores_with_false_positives_present():
-    """The full seeded set: precision < 1.0 (the FP cases are present and counted)."""
+    """The full seeded set after T-503: precision 0.75.
+
+    The post-engagement cooldown suppresses the 'What do you need?' FP and the
+    pending-wall TTL drops the stale-wall FP, so two of the three false fires are
+    gone; the one remaining false fire is the wrong-category case (a detector
+    mis-naming that no orchestrator/threshold lever can fix). 4 fires, 3 useful.
+    """
     result = run_fixtures(seed_fixtures())
-    assert result.total_fires == 5
+    assert result.total_fires == 4
     assert result.useful_fires == 3
-    assert result.false_fires == 2
-    assert result.precision == pytest.approx(0.6)
+    assert result.false_fires == 1
+    assert result.precision == pytest.approx(0.75)
 
 
-def test_seeded_what_do_you_need_is_a_false_fire():
-    """The borderline 'What do you need?' case scores as a false fire (qa verdict)."""
+def test_seeded_what_do_you_need_is_suppressed_by_cooldown():
+    """The borderline 'What do you need?' case is suppressed (T-503 post-engagement
+    cooldown), so it never fires — the FP the success-metric tune was built to kill.
+    """
     from jarvis.eval.seed import seed_false_what_do_you_need
 
     result = run_fixture(seed_false_what_do_you_need())
-    assert result.total_fires == 1
-    assert result.false_fires == 1
+    assert result.total_fires == 0  # cooldown suppressed the would-be false fire
+    # With the cooldown disabled it WOULD fire (and score false) — proving the
+    # suppression, not the absence of a wall, is what removed it.
+    from dataclasses import replace
+
+    fx = seed_false_what_do_you_need()
+    fx.config = replace(fx.config, post_engagement_cooldown_seconds=0.0)
+    no_cooldown = run_fixture(fx)
+    assert no_cooldown.total_fires == 1
+    assert no_cooldown.false_fires == 1
+
+
+def test_seeded_stale_pending_wall_is_dropped_by_ttl():
+    """The stale-wall case: its only opening lands past the pending-wall TTL, so the
+    cached wall is dropped and never fires late (T-503 staleness clear).
+    """
+    from dataclasses import replace
+
+    from jarvis.eval.seed import ff_false_stale_pending_wall
+
+    result = run_fixture(ff_false_stale_pending_wall())
+    assert result.total_fires == 0  # TTL dropped the stale wall
+    # With the TTL disabled the stale wall WOULD fire late (and score false).
+    fx = ff_false_stale_pending_wall()
+    fx.config = replace(fx.config, pending_wall_ttl_seconds=0.0)
+    no_ttl = run_fixture(fx)
+    assert no_ttl.total_fires == 1
+    assert no_ttl.false_fires == 1
 
 
 def test_seeded_summon_is_excluded_entirely():
@@ -416,8 +450,9 @@ def test_seeded_backoff_fires_once_and_misses_the_repeat():
 def test_precision_by_category_breakdown():
     result = run_fixtures(seed_fixtures())
     by_cat = result.precision_by_category()
-    # factual_gap over-fires (the FP cases live there): 2 useful of 4 fires.
-    assert by_cat[WallCategory.FACTUAL_GAP] == (2, 4)
+    # After T-503: factual_gap = 2 useful of 3 fires (the WDYN + stale FPs are
+    # suppressed; the remaining factual_gap false fire is the wrong-category case).
+    assert by_cat[WallCategory.FACTUAL_GAP] == (2, 3)
     assert by_cat[WallCategory.UNANSWERED_QUESTION] == (1, 1)
 
 

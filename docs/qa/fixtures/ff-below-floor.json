@@ -1,12 +1,14 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "fixture_id": "ff-below-floor",
   "description": "A real wall but confidence 0.55 (< 0.70 floor), clean opening. No fire (sub-threshold) \u2192 a miss (recall datum); precision unaffected.",
   "source": "eval-plan illustrative #5",
   "config": {
     "settle_seconds": 0.6,
     "politeness_gap_seconds": 2.0,
-    "interjection_confidence_floor": 0.7
+    "interjection_confidence_floor": 0.7,
+    "post_engagement_cooldown_seconds": 8.0,
+    "pending_wall_ttl_seconds": 12.0
   },
   "timeline": [
     {
@@ -33,6 +35,7 @@
       "category": "factual_gap",
       "label": "useful",
       "rationale": "Real useful wall, but below the floor \u2192 stays silent (a miss).",
+      "wall_detected_at": null,
       "observed_confidence": 0.55,
       "observed_offer": "Want me to look that up?",
       "observed_category": null,

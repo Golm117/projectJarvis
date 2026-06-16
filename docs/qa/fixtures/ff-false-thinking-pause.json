@@ -1,12 +1,14 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "fixture_id": "ff-false-thinking-pause",
   "description": "A pauses mid-thought (a factual_gap cue) but resumes before the 2 s gap elapses. The controller aborts on resume \u2192 no fire (FP removed).",
   "source": "eval-plan illustrative #2",
   "config": {
     "settle_seconds": 0.6,
     "politeness_gap_seconds": 2.0,
-    "interjection_confidence_floor": 0.7
+    "interjection_confidence_floor": 0.7,
+    "post_engagement_cooldown_seconds": 8.0,
+    "pending_wall_ttl_seconds": 12.0
   },
   "timeline": [
     {
@@ -47,6 +49,7 @@
       "category": "factual_gap",
       "label": "false",
       "rationale": "A thinking-pause; A resumes before the gap. A fire here would be false.",
+      "wall_detected_at": null,
       "observed_confidence": 0.8,
       "observed_offer": "Want me to look that up?",
       "observed_category": null,

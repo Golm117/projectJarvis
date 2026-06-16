@@ -1,12 +1,14 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "fixture_id": "seed-summon-excluded",
   "description": "Path-A summon ('Jarvis, add that to my calendar.'): an invited engagement, excluded from the interjection-precision metric (no Path-B candidate).",
   "source": "seeded from live runs (NOTES.md T-105/T-204)",
   "config": {
     "settle_seconds": 0.6,
     "politeness_gap_seconds": 2.0,
-    "interjection_confidence_floor": 0.7
+    "interjection_confidence_floor": 0.7,
+    "post_engagement_cooldown_seconds": 8.0,
+    "pending_wall_ttl_seconds": 12.0
   },
   "timeline": [
     {

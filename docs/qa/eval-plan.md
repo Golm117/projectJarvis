@@ -246,9 +246,15 @@ emits this same schema from real opt-in conversations.
 > `seed.py` (the seeded corpus → `docs/qa/fixtures/*.json`). The full
 > capture→label→score workflow + the privacy/retention model + the qa verdict on
 > the live "What do you need?" false positive are in
-> `docs/qa/capture-and-label.md`. The seeded set scores **precision 0.60** on the
-> shipped defaults (3 useful of 5 fires); T-503 sweeps the `config` block against
-> it.
+> `docs/qa/capture-and-label.md`. The seeded set scored **precision 0.60** on the
+> T-502 defaults; **T-503 raised it to 0.75** (post-engagement cooldown +
+> pending-wall TTL) — see `docs/qa/threshold-tuning.md`.
+>
+> **T-503 schema additions (v2):** an `engagement` moment kind (marks when Jarvis
+> engaged, so the runner applies the post-engagement cooldown), a candidate
+> `wall_detected_at` field (the pending-wall TTL anchor), and two `config` knobs
+> (`post_engagement_cooldown_seconds`, `pending_wall_ttl_seconds`). The loader
+> reads both v1 and v2 fixtures.
 
 ### Precision computation — matching fires to labels
 

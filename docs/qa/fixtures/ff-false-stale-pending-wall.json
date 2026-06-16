@@ -1,0 +1,88 @@
+{
+  "schema_version": 2,
+  "fixture_id": "ff-false-stale-pending-wall",
+  "description": "A factual_gap wall is cached, but no clean ~2 s opening arrives until after the 12 s pending-wall TTL (the conversation moved on). A late fire would be a stale false interjection \u2014 the T-503 TTL drops it first.",
+  "source": "T-503 staleness fixture (carry-forward from T-302/T-303 review)",
+  "config": {
+    "settle_seconds": 0.6,
+    "politeness_gap_seconds": 2.0,
+    "interjection_confidence_floor": 0.7,
+    "post_engagement_cooldown_seconds": 8.0,
+    "pending_wall_ttl_seconds": 12.0
+  },
+  "timeline": [
+    {
+      "t": 0.0,
+      "kind": "speech_start"
+    },
+    {
+      "t": 0.0,
+      "kind": "utterance",
+      "speaker": "A",
+      "text": "What was that vendor's name? Anyway, moving on \u2014"
+    },
+    {
+      "t": 0.5,
+      "kind": "speech_end"
+    },
+    {
+      "t": 0.8,
+      "kind": "speech_start"
+    },
+    {
+      "t": 0.8,
+      "kind": "utterance",
+      "speaker": "A",
+      "text": "let's talk about the launch plan instead."
+    },
+    {
+      "t": 1.3,
+      "kind": "speech_end"
+    },
+    {
+      "t": 1.6,
+      "kind": "speech_start"
+    },
+    {
+      "t": 1.6,
+      "kind": "utterance",
+      "speaker": "B",
+      "text": "Right, the launch. I think we ship Tuesday."
+    },
+    {
+      "t": 2.1,
+      "kind": "speech_end"
+    },
+    {
+      "t": 2.4,
+      "kind": "speech_start"
+    },
+    {
+      "t": 2.4,
+      "kind": "utterance",
+      "speaker": "B",
+      "text": "And we should line up the press release too."
+    },
+    {
+      "t": 15.0,
+      "kind": "speech_end"
+    }
+  ],
+  "candidates": [
+    {
+      "candidate_id": "c1",
+      "match_from": 15.0,
+      "match_to": 20.0,
+      "wall": true,
+      "category": "factual_gap",
+      "label": "false",
+      "rationale": "The wall went stale: its only clean opening lands ~15 s after it surfaced, long after the conversation moved to the launch plan. A fire here is a late false interjection about a passed topic \u2014 the T-503 pending-wall TTL (12 s) drops it before it can fire.",
+      "wall_detected_at": 0.0,
+      "observed_confidence": 0.9,
+      "observed_offer": "Want me to find the vendor?",
+      "observed_category": null,
+      "observed_fired": false,
+      "observed_drop_reason": "pending-wall TTL expired (stale)"
+    }
+  ]
+}

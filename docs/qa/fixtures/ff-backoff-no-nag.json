@@ -1,12 +1,14 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "fixture_id": "ff-backoff-no-nag",
   "description": "The same wall (identical offer) surfaces across two openings. Fire #1 useful; fire #2 suppressed by back-off \u2192 only one fire counted.",
   "source": "eval-plan illustrative #4",
   "config": {
     "settle_seconds": 0.6,
     "politeness_gap_seconds": 2.0,
-    "interjection_confidence_floor": 0.7
+    "interjection_confidence_floor": 0.7,
+    "post_engagement_cooldown_seconds": 8.0,
+    "pending_wall_ttl_seconds": 12.0
   },
   "timeline": [
     {
@@ -47,6 +49,7 @@
       "category": "factual_gap",
       "label": "useful",
       "rationale": "First surfacing of the wall + clean opening \u2192 useful fire.",
+      "wall_detected_at": null,
       "observed_confidence": 0.9,
       "observed_offer": "Want me to find the vendor?",
       "observed_category": null,
@@ -61,6 +64,7 @@
       "category": "factual_gap",
       "label": "useful",
       "rationale": "Same wall, same offer, second opening \u2014 back-off suppresses the repeat (no nagging). Stays silent \u2192 recorded as a miss, not a fire.",
+      "wall_detected_at": null,
       "observed_confidence": 0.9,
       "observed_offer": "Want me to find the vendor?",
       "observed_category": null,

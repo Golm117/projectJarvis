@@ -32,6 +32,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from jarvis.attention_layer import (
+    DEFAULT_PENDING_WALL_TTL_SECONDS,
+    DEFAULT_POST_ENGAGEMENT_COOLDOWN_SECONDS,
+)
 from jarvis.core.summon_controller import DEFAULT_INTERJECTION_CONFIDENCE_FLOOR
 from jarvis.core.turn_taking_gate import (
     DEFAULT_POLITENESS_GAP_SECONDS,
@@ -41,20 +45,31 @@ from jarvis.types import WallCategory
 
 # Schema version, bumped if the on-disk shape changes incompatibly. Capture
 # stamps it; the loader checks it so an old fixture can't be silently misread.
-SCHEMA_VERSION = 1
+#
+# v2 (T-503) adds the ``engagement`` moment kind so a fixture can mark *when*
+# Jarvis engaged (a summon or a fired interjection), which the runner needs to
+# apply the post-engagement Path-B cooldown. A v1 fixture has no engagement
+# moments, so the v1→v2 read is loss-free; the loader accepts both.
+SCHEMA_VERSION = 2
+_SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2})
 
 
 class MomentKind(StrEnum):
-    """The three kinds of timeline entry (eval-plan §fixture format).
+    """The kinds of timeline entry (eval-plan §fixture format).
 
     * ``UTTERANCE`` — a transcribed line (feeds RollingWindow + WallDetector).
     * ``SPEECH_START`` — VAD onset → ``gate.on_speech_start()``.
     * ``SPEECH_END`` — VAD offset → ``gate.on_speech_end()`` (a silence opens).
+    * ``ENGAGEMENT`` — Jarvis engaged at this instant (a Path-A summon or a fired
+      Path-B interjection). Marks the start of a dialogue *with* Jarvis. The
+      runner records its ``t`` and suppresses ambient Path-B fires within the
+      post-engagement cooldown that follows it (T-503). Added in schema v2.
     """
 
     UTTERANCE = "utterance"
     SPEECH_START = "speech_start"
     SPEECH_END = "speech_end"
+    ENGAGEMENT = "engagement"
 
 
 class Label(StrEnum):
@@ -87,6 +102,13 @@ class Config:
     settle_seconds: float = DEFAULT_SETTLE_SECONDS
     politeness_gap_seconds: float = DEFAULT_POLITENESS_GAP_SECONDS
     interjection_confidence_floor: float = DEFAULT_INTERJECTION_CONFIDENCE_FLOOR
+    # T-503 orchestrator-policy knobs. The runner applies these the way
+    # AttentionLayer does (cooldown suppresses an ambient Path-B fire within the
+    # window after an ENGAGEMENT moment; TTL drops a pending wall that waited too
+    # long). They default to the calibrated production values so a fixture written
+    # without them reproduces the shipped behavior; 0.0 disables either rule.
+    post_engagement_cooldown_seconds: float = DEFAULT_POST_ENGAGEMENT_COOLDOWN_SECONDS
+    pending_wall_ttl_seconds: float = DEFAULT_PENDING_WALL_TTL_SECONDS
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -102,6 +124,15 @@ class Config:
             ),
             interjection_confidence_floor=float(
                 d.get("interjection_confidence_floor", DEFAULT_INTERJECTION_CONFIDENCE_FLOOR)
+            ),
+            post_engagement_cooldown_seconds=float(
+                d.get(
+                    "post_engagement_cooldown_seconds",
+                    DEFAULT_POST_ENGAGEMENT_COOLDOWN_SECONDS,
+                )
+            ),
+            pending_wall_ttl_seconds=float(
+                d.get("pending_wall_ttl_seconds", DEFAULT_PENDING_WALL_TTL_SECONDS)
             ),
         )
 
@@ -165,6 +196,15 @@ class Candidate:
     label: Label
     rationale: str = ""
 
+    # T-503 pending-wall TTL anchor: when this wall was first *detected* (cached as
+    # pending), distinct from the match window (when a fire is attributed). The
+    # runner ages the pending-wall TTL from here, mirroring AttentionLayer caching
+    # the verdict at ingest. ``None`` ⇒ the runner anchors the TTL at ``match_from``
+    # (the common case: a wall fires into the opening right after it surfaces, so
+    # the two coincide). Set it explicitly only for a staleness case where the wall
+    # is cached well before its (late) opening — e.g. ``ff-false-stale-pending-wall``.
+    wall_detected_at: float | None = None
+
     # --- raw observed facts from capture (informational; not scored) ---------
     # The confidence the detector returned for this candidate's verdict (the
     # value the floor is applied to). None for a hand-authored fixture.
@@ -193,6 +233,7 @@ class Candidate:
             "category": self.category,
             "label": self.label.value,
             "rationale": self.rationale,
+            "wall_detected_at": self.wall_detected_at,
             "observed_confidence": self.observed_confidence,
             "observed_offer": self.observed_offer,
             "observed_category": self.observed_category,
@@ -210,6 +251,9 @@ class Candidate:
             category=d.get("category"),
             label=Label(d.get("label", Label.UNLABELED.value)),
             rationale=str(d.get("rationale", "")),
+            wall_detected_at=(
+                None if d.get("wall_detected_at") is None else float(d["wall_detected_at"])
+            ),
             observed_confidence=(
                 None if d.get("observed_confidence") is None else float(d["observed_confidence"])
             ),
@@ -280,10 +324,10 @@ class Fixture:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Fixture:
         version = int(d.get("schema_version", SCHEMA_VERSION))
-        if version != SCHEMA_VERSION:
+        if version not in _SUPPORTED_SCHEMA_VERSIONS:
             raise ValueError(
-                f"fixture schema_version {version} != supported {SCHEMA_VERSION} "
-                f"(fixture_id={d.get('fixture_id')!r})"
+                f"fixture schema_version {version} not in supported "
+                f"{sorted(_SUPPORTED_SCHEMA_VERSIONS)} (fixture_id={d.get('fixture_id')!r})"
             )
         return cls(
             fixture_id=str(d["fixture_id"]),

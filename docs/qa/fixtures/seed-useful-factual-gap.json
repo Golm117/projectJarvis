@@ -1,12 +1,14 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "fixture_id": "seed-useful-factual-gap",
   "description": "Live trigger (T-105/T-204/T-505): 'What was the date of the conference again?' detected as factual_gap @ 0.95, fires after a clean ~2 s opening.",
   "source": "seeded from live runs (NOTES.md T-505)",
   "config": {
     "settle_seconds": 0.6,
     "politeness_gap_seconds": 2.0,
-    "interjection_confidence_floor": 0.7
+    "interjection_confidence_floor": 0.7,
+    "post_engagement_cooldown_seconds": 8.0,
+    "pending_wall_ttl_seconds": 12.0
   },
   "timeline": [
     {
@@ -33,6 +35,7 @@
       "category": "factual_gap",
       "label": "useful",
       "rationale": "An unanswered factual gap among the speakers, followed by a clean 2 s opening \u2014 a well-timed offer to look it up. Fires once.",
+      "wall_detected_at": null,
       "observed_confidence": 0.95,
       "observed_offer": "Could you remind me of the conference date?",
       "observed_category": null,

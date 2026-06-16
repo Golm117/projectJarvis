@@ -190,17 +190,58 @@ def run_fixture(fx: Fixture) -> FixtureResult:
 
     fires: list[Fire] = []
     fired_candidate_ids: set[str] = set()
+    # T-503: candidates dropped by the pending-wall TTL (aged out before firing).
+    # Tracked so they are excluded from future fire attempts, mirroring how
+    # AttentionLayer.tick() drops a stale _pending_wall.
+    stale_candidate_ids: set[str] = set()
+    cooldown = fx.config.post_engagement_cooldown_seconds
+    ttl = fx.config.pending_wall_ttl_seconds
+    # Most recent ENGAGEMENT moment time on the timeline (a summon or a fired
+    # interjection), or None until one happens. Mirrors AttentionLayer's
+    # _last_engagement_at — the anchor for the post-engagement cooldown.
+    engagement_state: dict[str, float | None] = {"last": None}
+
+    def _in_cooldown(now: float) -> bool:
+        """Whether an ambient Path-B fire is suppressed by the post-engagement
+        cooldown at ``now`` (AttentionLayer._in_post_engagement_cooldown parity)."""
+        last = engagement_state["last"]
+        if cooldown <= 0.0 or last is None:
+            return False
+        return (now - last) < cooldown
 
     def _try_fire_open_candidates() -> None:
-        """At the current clock time, let any open candidate fire (once)."""
+        """At the current clock time, let any open candidate fire (once).
+
+        Applies the two T-503 orchestrator-policy rules the live AttentionLayer
+        applies, so the eval measures the shipped behavior:
+
+        * **Pending-wall TTL.** A candidate still unfired ``ttl`` seconds after its
+          wall first became evaluable (``match_from``) is aged out (dropped), never
+          to fire — a stale wall can't fire late.
+        * **Post-engagement cooldown.** A fire within ``cooldown`` of the last
+          ENGAGEMENT is suppressed (the user is in a dialogue *with* Jarvis).
+        """
         now = clock.now()
         for c in candidates:
-            if c.candidate_id in fired_candidate_ids:
+            if c.candidate_id in fired_candidate_ids or c.candidate_id in stale_candidate_ids:
                 continue
             if not (c.match_from <= now <= c.match_to):
                 continue
+            # T-503 TTL: the wall was cached (became pending) at wall_detected_at —
+            # or match_from when unset (the common case: it opens right where it
+            # surfaced). If it has waited past the TTL without firing, drop it
+            # (stale) — don't fire it. Mirrors AttentionLayer.tick() dropping a
+            # _pending_wall whose cached-at age exceeded the TTL.
+            detected_at = c.match_from if c.wall_detected_at is None else c.wall_detected_at
+            if ttl > 0.0 and (now - detected_at) >= ttl:
+                stale_candidate_ids.add(c.candidate_id)
+                continue
             decision = controller.consider_interjection(verdicts[c.candidate_id])
             if decision is not None and decision.reason is TriggerReason.INTERJECTION:
+                # T-503 cooldown: suppress an ambient fire inside the window after
+                # an engagement (parity with AttentionLayer ingest/tick suppression).
+                if _in_cooldown(now):
+                    continue
                 fired_candidate_ids.add(c.candidate_id)
                 fires.append(_fire_from(decision, now))
 
@@ -220,6 +261,12 @@ def run_fixture(fx: Fixture) -> FixtureResult:
             gate.on_speech_start()
         elif m.kind is MomentKind.SPEECH_END:
             gate.on_speech_end()
+        elif m.kind is MomentKind.ENGAGEMENT:
+            # T-503: Jarvis engaged here (a summon or a fired interjection). Arm the
+            # post-engagement cooldown so ambient Path-B fires in the window that
+            # follows are suppressed — parity with AttentionLayer._engage stamping
+            # _last_engagement_at.
+            engagement_state["last"] = m.t
         # UTTERANCE moments carry no gate effect here (the labeled candidates,
         # not the raw text, drive the verdict — see eval-plan §"How it runs").
         _try_fire_open_candidates()
