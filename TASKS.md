@@ -627,7 +627,7 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 ### Phase 4 — The voice
 
 ---
-**T-401 — ClaudeResponder: EngagedResponder via claude-opus-4-8**
+### T-401 — ClaudeResponder: EngagedResponder via claude-opus-4-8
 - **Status:** done
 - **Owner:** voice-integration-engineer
 - **Claimed:** 2026-06-15T14:00Z
@@ -640,7 +640,7 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 - **Notes:** DONE. Not qa-gated (responder is not a gate/summon/wall module). Spoken-style system prompt: 1–3 sentences, no preamble, no markdown, plain prose, peer-who-was-listening register. Lazy import: `import anthropic` only in `_get_client()` when no injected client. `thinking` param omitted (adaptive off by default on Opus 4.8 — correct for short spoken replies). Handoff → T-402 (ElevenLabsVoice).
 
 ---
-**T-402 — ElevenLabsVoice: VoiceOutput via ElevenLabs streaming TTS**
+### T-402 — ElevenLabsVoice: VoiceOutput via ElevenLabs streaming TTS
 - **Status:** done
 - **Owner:** voice-integration-engineer
 - **Claimed:** 2026-06-15T15:00Z
@@ -653,7 +653,7 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 - **Notes:** DONE. Not qa-gated (voice output, not gate/summon/wall). API: `client.text_to_speech.stream(voice_id, text=text, model_id=model_id)` returns `Iterator[bytes]`; piped to `elevenlabs.play.stream()` for real-time streaming playback. Default voice: Rachel (21m00Tcm4TlvDq8ikWAM), model: eleven_multilingual_v2. Both lazy-imported; injected play callable keeps audio out of tests. Handoff → T-403 (token-stream Claude → ElevenLabs pipeline).
 
 ---
-**T-403 — Token-stream Claude → ElevenLabs; barge-safe**
+### T-403 — Token-stream Claude → ElevenLabs; barge-safe
 - **Status:** done
 - **Owner:** voice-integration-engineer
 - **Claimed:** 2026-06-15T15:30Z
@@ -666,7 +666,7 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 - **Notes:** DONE. Not qa-gated. `VoiceSession` wraps `ClaudeResponder` + `ElevenLabsVoice`. Uses `client.messages.stream()` + `stream.text_stream` for token iteration. Sentence-chunking with `_SENTENCE_END_RE` + `_MAX_CHUNK_CHARS=200` force-flush. Stop event checked before each chunk (barge-safe at sentence granularity). Frozen `respond()` + `speak()` seam contracts preserved. Handoff → T-404 (wire into `--voice` flag in live.py).
 
 ---
-**T-404 — Wire real voice adapters into --live behind --voice flag; live test on M5**
+### T-404 — Wire real voice adapters into --live behind --voice flag; live test on M5
 - **Status:** done
 - **Owner:** voice-integration-engineer
 - **Claimed:** 2026-06-15T16:00Z
