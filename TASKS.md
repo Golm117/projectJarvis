@@ -682,3 +682,26 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 - (planned T-502) Capture-and-label tooling for real conversations (ephemeral, opt-in). [qa-tuning]
 - (planned T-503) Tune politeness-gap + confidence threshold against the interjection-precision metric. [qa-tuning]
 - (planned T-504) Stability / thermal / battery pass for sustained always-on. [sensing-engineer]
+
+### T-505 — Real-room ASR quality pass: upgrade to small.en + noise-segment filtering
+- **Status:** claimed
+- **Priority:** P1
+- **Role:** sensing-engineer
+- **Owner:** sensing-engineer
+- **Phase:** 5
+- **Created:** 2026-06-16T00:00:00Z
+- **Claimed:** 2026-06-16T00:00:00Z
+- **Completed:** —
+- **Depends on:** T-104 (done), T-201 (done — joint budget numbers available)
+- **Description:** Real-room ASR quality pass. The live built-in-mic test showed `base.en` mishearing in a room: "Jarvis" → "Germans", plus garbage segments "service.!!!!!!!!!!", "Mm.", "!". Upgrade ASR model from `base.en` to `small.en` (the documented upgrade lever in `asr-spike.md`); keep model configurable. Add a segment filter in `MicSource._close_segment` to drop non-lexical noise before it reaches the window/wall detector/Claude: drop empty text (already done), pure-punctuation/symbol-only segments, and segments below a minimum lexical threshold — while keeping short real replies ("Yes.", "Jarvis", "No.", "Okay."). Re-measure the joint ASR+Qwen budget with `small.en`. Run live on the built-in mic for a verbatim before/after.
+- **Acceptance:**
+  - `MlxWhisperTranscriber` takes `repo` constructor arg (already exists) defaulting to `mlx-community/whisper-small.en-mlx`; `base.en` still selectable. ✓
+  - Segment filter in `MicSource`: drops empty (existing), pure-punctuation/symbol-only, and below min lexical threshold. Keeps "Jarvis", "Yes.", "No.", short real replies. Thresholds as configurable constants. ✓
+  - `small.en` weights downloaded and exercised on this M5. ✓
+  - Joint budget re-measured: `small.en` ASR + Qwen2.5-3B back-to-back — confirms still clears ~2 s budget with margin. ✓
+  - `docs/audio/asr-spike.md` updated with `small.en` numbers + new DECISIONS.md entry. ✓
+  - Unit tests (model-free): segment filter drops "!", "Mm.", pure-punct, empty; keeps "Jarvis", "Yes.", "What was the date again?". Tests that `MlxWhisperTranscriber` accepts the model repo arg (no model load). Suite stays green (currently 347). Ruff clean. ✓
+  - Live built-in-mic test: verbatim before/after — does "Jarvis" transcribe correctly? Are garbage segments gone? Honest result. ✓
+- **Progress:**
+  - 2026-06-16T00:00Z — claimed; orientation complete.
+- **Notes:** NOT qa-gated (audio/sensing path only — does not touch TurnTakingGate, SummonController, WallDetector, or any interjection threshold). Scope fence: ASR model + segment filter only.
