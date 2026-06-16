@@ -514,7 +514,31 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
   - 2026-06-15T23:00Z — trace complete; 6 pinning tests written + green (270 total); `docs/architecture/phase3-invariants.md` written.
 - **Notes:** DONE (not qa-gated — verify-only + adds tests, no logic change). **One-clock invariant HOLDS.** Silence-gap confirmed as T-302 integration point. Recommended T-302 hook: `AttentionLayer.tick()` calling cached `consider_interjection` during silence; threading isolated to `live.py`. Non-deterministic back-off finding noted: use cached verdict from ingest (not a fresh model call) so offer text is stable across ticks. No defects in qa-gated modules. **T-302 picks up** with the `tick()` design from `docs/architecture/phase3-invariants.md` §3.
 
-- (planned T-302) Real-time SummonController — continuous Path-B re-evaluation during silence. [core-engineer]
+### T-302 — Real-time SummonController — continuous Path-B re-evaluation during silence
+- **Status:** claimed
+- **Priority:** P0
+- **Role:** core-engineer
+- **Owner:** core-engineer
+- **Phase:** 3
+- **Created:** 2026-06-15T00:00:00Z
+- **Claimed:** 2026-06-15T23:30:00Z
+- **Completed:**
+- **Depends on:** T-301 ✅
+- **Description:** Implement `AttentionLayer.tick()` + a background timer in `live.py` so Path-B interjections fire *mid-conversation during silence*, not only at utterance-ingest. The `MicSource.utterances()` generator blocks during silence — so `ingest` (and therefore `SummonController.consider_interjection`) is never called while the politeness gap opens. `tick()` is the pure re-evaluation hook that a daemon thread in `live.py` calls periodically (~150–250 ms cadence) to fire the interjection once the gap clears. Based on the design from `docs/architecture/phase3-invariants.md` §3.
+- **Acceptance:**
+  - `AttentionLayer.tick()` added: re-evaluates `consider_interjection` with the cached `_pending_wall` verdict; no-op if none; clears on fire.
+  - `_pending_wall: WallVerdict | None` cached at `ingest` time (when consider_interjection returns None and is_wall is True); cleared on engagement (Path A or Path B fire).
+  - Background daemon thread in `live.py` calls `layer.tick()` at ~200 ms cadence; replaces the trailing re-check affordance (lines 238-257).
+  - Thread-safety: single `threading.Lock` in `live.py` wraps both `layer.ingest(u)` and `layer.tick()` calls; `AttentionLayer`/`SummonController` stay single-threaded pure logic.
+  - One-clock invariant preserved: `tick()` reads time only through the gate predicates.
+  - No changes to `TurnTakingGate`, `SummonController`, or `WallDetector`.
+  - Test suite ≥270 green, ruff clean.
+  - Tests pin: tick fires once after gap; fires exactly once (double-fire regression); abort-on-resume; no pending wall = no-op; engagement clears cache; staleness/replacement policy.
+  - Status `review` with qa brief; NOT marked done.
+- **Progress:**
+  - 2026-06-15T23:30Z — claimed; orientation complete (T-301 design doc read).
+- **Notes:** QA-GATED (changes live interjection-firing behavior — the project's success metric). Mark `review` and route to qa-tuning. qa-tuning's review folds in T-303's live validation (abort-on-resume + back-off on live audio).
+
 - (planned T-303) Validate abort-on-resume and back-off on live audio. [core-engineer + qa-tuning]
 - (planned T-304) Latency budget pass — gate → detector → offer within target. [core-engineer]
 
