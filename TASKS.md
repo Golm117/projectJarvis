@@ -941,3 +941,30 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
   - **`ff-false-wrong-category` — verified still FALSE** under the new grading (scored by category mismatch, confidence-independent; fired `factual_gap` ≠ ground-truth `stuck_point`). Remains the irreducible detector-mis-naming FP capping the set at 0.75.
   - **√81 reliability — honest assessment.** The brief's single non-deterministic run did NOT reproduce: repeated live probing (8×8, this review) found the 3B **stable** — √81 *question* form 8/8 rating-5 (0.95, fires); √81 *wh-form* 8/8 rating-3 (0.65, suppressed at the floor). The pre-filter miss (the real root cause) is definitively fixed. The residual wh-form 0.65 is a WallBackend **prompt** lever (local-ml-engineer's lane), recall work on a precision-first metric — **not a v0 blocker**. **7B escalation / fine-tuning NOT warranted** by this evidence (model is consistent; question form fires reliably). Flagged to orchestrator as a possible v1 lever only.
   - **Two items surfaced to orchestrator/human (neither blocks):** (1) the floor *value* — keep 0.70 vs lower to 0.65 — is a user-visible threshold decision (recommend keep). (2) wh-form rating-3 recall is a v1 prompt lever, not a 7B/fine-tune decision.
+
+### T-509 — Escalate local brain to Qwen2.5-7B + fix prompt-framing regression in wall detector
+- **Status:** claimed
+- **Priority:** P0
+- **Role:** local-ml-engineer
+- **Owner:** local-ml-engineer
+- **Phase:** 5
+- **Created:** 2026-06-16T23:30:00Z
+- **Claimed:** 2026-06-16T23:30:00Z
+- **Completed:**
+- **Depends on:** T-508 (done — graded infra ships; T-508 gate was flawed per orchestrator live capture)
+- **Description:** Live capture run on the REAL pipeline showed the T-508 graded backend fires on NOTHING — 0 Path-B candidates on clear factual questions. Root cause: the T-508 prompt's "GAP" framing makes the model exclude direct questions ("it is answerable by Jarvis, but it is not a gap as it is a direct question from the group"). TWO problems: (1) T-508 prompt-framing regression — direct unanswered questions are the PRIMARY fire case but the model reasons them away; (2) T-508's qa-gate validated on clean single-line probes, not the real `detect_wall(rolling-window-transcript, summary)` path. This task: (a) measure 7B joint budget BEFORE switching (GATE); (b) switch `QwenModel` default to 7B; (c) fix the prompt framing so direct unanswered/factual questions are the PRIMARY fire case, not excluded; (d) validate on the REAL `detect_wall` path with multi-line rolling-window transcripts + a live `--capture` run. qa-GATED.
+- **Acceptance:**
+  - STEP 1 (gate): 7B joint latency measured on this M5 (small.en ASR + 7B summarize + 7B detect_wall); if > ~2 s budget → STOP and report.
+  - STEP 2: `DEFAULT_MODEL_PATH` in `qwen.py` changed to `mlx-community/Qwen2.5-7B-Instruct-4bit`; 3B remains selectable; one shared instance still feeds both backends.
+  - STEP 3: prompt framing fixed — direct unanswered question, factual question to the group = PRIMARY fire cases (rating 4–5); the model MUST NOT reason "it's a direct question so it's not a gap." Precision-first guards stay (statements, plans, Jarvis-directed not a gap).
+  - STEP 4: validated on the REAL `detect_wall(transcript, summary)` with multi-line rolling-window inputs (NOT clean single-line probes). "What's the square root of 81?" in a math-chat window → fire; "4 times 7?" → fire; "What do you need?" post-summon → not fire; self-musing → not fire; plain statement → not fire. Multiple runs reported (non-determinism noted).
+  - STEP 4b: live `--capture` run on M5 (`--live --local-brain --device 6 --capture /tmp/t509.json --seconds 60`), speaking factual questions — report candidates + verdicts.
+  - Model-free tests updated/extended (prompt text changed; test any assertions on exact prompt phrases; graded infra unchanged).
+  - `~/.local/bin/uv run pytest -q` GREEN + ruff clean.
+  - DECISIONS.md entry for 7B switch.
+  - `docs/ml/qwen-coexistence-spike.md` updated with 7B numbers.
+  - Status → `review` with strict qa brief (qa must validate on real `detect_wall` path, NOT clean probes).
+  - Do NOT mark `done`.
+- **Progress:**
+  - 2026-06-16T23:30:00Z — claimed; all orientation files read; baseline 523 green confirmed.
+- **Notes:** qa-GATED. Route to qa-tuning before marking done. T-508's `done` rested on a flawed gate (clean single-line probes ≠ real `detect_wall` path). T-509 supersedes the 3B prompt for production use. DECISIONS.md entry required for 7B model switch.
