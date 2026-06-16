@@ -17,9 +17,13 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-16 (T-503 DONE → interjection precision tuned 0.60 → 0.75; cooldown finalized 6.0 s)
+## Current state — 2026-06-16 (v0 FEATURE-COMPLETE → Phases 0–5 done bar the deferred T-504 soak; pushed to origin/main)
 
-**Phase:** phase_5 (active). T-503 (tune interjection precision, qa-tuning) is **DONE** — independent core-engineer review **APPROVED**; **human sign-off on post-engagement cooldown = 6.0 s** (down from the 8.0 s default). Suite **454 green**, ruff clean. On `main`, not pushed. **Remaining Phase 5 = T-504 (thermal/battery soak, sensing-engineer) only.**
+**Phase:** phase_5 → **v0 FEATURE-COMPLETE.** The whole v0 MVP (Phases 0–5) is built, tuned, and validated: real-room ASR (`small.en`), local Qwen2.5-3B brain, continuous live interjection loop, Claude→ElevenLabs voice, always-on `--forever`, and interjection precision tuned **0.60 → 0.75**. T-503 (tune interjection precision, qa-tuning) is **DONE** — independent core-engineer review **APPROVED**; **human sign-off on post-engagement cooldown = 6.0 s** (down from 8.0 s). Suite **454 green**, ruff clean.
+
+**The only open task is T-504 (thermal/battery soak) — DEFERRED to real-world use** per human decision 2026-06-16: v0 declared feature-complete; the real multi-hour soak is normal always-on use. The always-on loop already ships **bounded memory** (`deque(maxlen=1000)`) + **graceful shutdown** by design (T-501). Run a bounded soak / reopen T-504 if instability surfaces in use.
+
+**Pushed to `origin/main`** 2026-06-16 (human push-gate cleared). Known v1 levers (deferred, evidence-logged): declarative-`factual_gap` recall + the detector's lone wrong-category FP (`ff-false-wrong-category`) — both wall-prompt work, not orchestrator/threshold levers.
 
 **T-503 finalization (this session):** the cooldown was lowered 8.0 → **6.0 s** and applied coherently everywhere — the `DEFAULT_POST_ENGAGEMENT_COOLDOWN_SECONDS` constant + docstring (`attention_layer.py`), the T-503 tests, the regenerated fixtures (`docs/qa/fixtures/*.json` `config.post_engagement_cooldown_seconds`), `docs/qa/threshold-tuning.md`, and a new superseding `DECISIONS.md` entry. 6.0 s is the minimum that suppresses the 5.5 s "What do you need?" FP (speech_end 3.5 s + 2 s gap), chosen for responsiveness over the 8.0 s robustness margin; **precision is identical at 0.75** (6 and 8 s both score it — the cooldown touches only that one FP). The unrelated match-window `8.0` (`DEFAULT_MATCH_WINDOW_SECONDS` / `match_to=8.0`) was deliberately left untouched.
 

@@ -812,7 +812,7 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 
   **Status remains `review` — the orchestrator marks `done` after the human signs off on the cooldown value.**
 
-- (planned T-504) Stability / thermal / battery pass for sustained always-on. [sensing-engineer]
+- **T-504 — DEFERRED** Stability / thermal / battery pass for sustained always-on. [sensing-engineer] — **Deferred to real-world use** per human decision 2026-06-16: v0 declared **feature-complete**; the real multi-hour soak is normal always-on use. The always-on loop already ships bounded memory (`deque(maxlen=1000)`) + graceful shutdown by design (T-501). Run a bounded soak / reopen if instability surfaces in use.
 
 ### T-505 — Real-room ASR quality pass: upgrade to small.en + noise-segment filtering
 - **Status:** done
