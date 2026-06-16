@@ -17,13 +17,15 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-16 (T-503 in REVIEW → interjection precision tuned 0.60 → 0.75)
+## Current state — 2026-06-16 (T-503 DONE → interjection precision tuned 0.60 → 0.75; cooldown finalized 6.0 s)
 
-**Phase:** phase_5 (active). T-503 (tune interjection precision, qa-tuning, this session) is **IN REVIEW** — qa-gated AND qa-tuning's own task, so it needs an **independent review by core-engineer** before merge (the orchestrator arranges it). Suite **454 green** (441 baseline + 13 new), ruff clean. On `main`, not pushed.
+**Phase:** phase_5 (active). T-503 (tune interjection precision, qa-tuning) is **DONE** — independent core-engineer review **APPROVED**; **human sign-off on post-engagement cooldown = 6.0 s** (down from the 8.0 s default). Suite **454 green**, ruff clean. On `main`, not pushed. **Remaining Phase 5 = T-504 (thermal/battery soak, sensing-engineer) only.**
+
+**T-503 finalization (this session):** the cooldown was lowered 8.0 → **6.0 s** and applied coherently everywhere — the `DEFAULT_POST_ENGAGEMENT_COOLDOWN_SECONDS` constant + docstring (`attention_layer.py`), the T-503 tests, the regenerated fixtures (`docs/qa/fixtures/*.json` `config.post_engagement_cooldown_seconds`), `docs/qa/threshold-tuning.md`, and a new superseding `DECISIONS.md` entry. 6.0 s is the minimum that suppresses the 5.5 s "What do you need?" FP (speech_end 3.5 s + 2 s gap), chosen for responsiveness over the 8.0 s robustness margin; **precision is identical at 0.75** (6 and 8 s both score it — the cooldown touches only that one FP). The unrelated match-window `8.0` (`DEFAULT_MATCH_WINDOW_SECONDS` / `match_to=8.0`) was deliberately left untouched.
 
 **T-503 — what was built (the success-metric task; precision 0.60 → 0.75 on the seeded eval):**
 
-- **Post-engagement cooldown (the FP fix)** in `AttentionLayer` (`src/jarvis/attention_layer.py`): after any engagement (summon OR fired interjection), ambient Path-B is suppressed for `DEFAULT_POST_ENGAGEMENT_COOLDOWN_SECONDS = 8.0`. `_engage()` stamps `_last_engagement_at`; `ingest()` + `tick()` check `_in_post_engagement_cooldown()`. Kills the "What do you need?" FP (a turn addressed AT Jarvis inside a just-engaged exchange — the live FP from T-502). **Placed in the orchestrator, NOT `SummonController`** (the pure decision machine has no notion of recent engagement) → qa-gated modules byte-for-byte unchanged.
+- **Post-engagement cooldown (the FP fix)** in `AttentionLayer` (`src/jarvis/attention_layer.py`): after any engagement (summon OR fired interjection), ambient Path-B is suppressed for `DEFAULT_POST_ENGAGEMENT_COOLDOWN_SECONDS = 6.0` (finalized value; was 8.0 in review). `_engage()` stamps `_last_engagement_at`; `ingest()` + `tick()` check `_in_post_engagement_cooldown()`. Kills the "What do you need?" FP (a turn addressed AT Jarvis inside a just-engaged exchange — the live FP from T-502). **Placed in the orchestrator, NOT `SummonController`** (the pure decision machine has no notion of recent engagement) → qa-gated modules byte-for-byte unchanged.
 - **Pending-wall TTL (staleness fix, the T-302/T-303 carry-forward)** in `AttentionLayer`: `tick()` drops `_pending_wall` once `now() - _pending_wall_cached_at >= ttl`. `DEFAULT_PENDING_WALL_TTL_SECONDS = 12.0`. New fixture `ff-false-stale-pending-wall` (wall cached t=0, opening only t=15) confirms it; a fresh wall (opening within TTL) still fires.
 - **Threshold sweep → NO default changed.** Confidence floor is **inert** (the FP and TP are BOTH `factual_gap @ 0.95` → move together at every floor value; raising the floor kills the TP before isolating the FP). Politeness gap 2.0 sits on its precision plateau (1.5–3.0 all = 0.60; <1.5 admits the thinking-pause FP; >4.0 kills useful fires). Settle is Path-A only. **The lever is context, not a threshold** — exactly as T-502 flagged. Full sweep tables in `docs/qa/threshold-tuning.md`.
 - **Carry-forward items — both DEFERRED with evidence:** (1) declarative `factual_gap` recall → defer to v1 (more fires can only hold/lower a precision-first metric; the corpus is FP-limited not recall-limited; it's a `local-ml-engineer`-lane WallBackend prompt change anyway). (2) confidence-floor recalibration → keep 0.70 (inert for the Qwen near-binary backend).
@@ -32,9 +34,9 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 **Achievable ceiling reached:** 0.75 is the ceiling on this seeded set — the lone remaining false fire is `ff-false-wrong-category` (a detector mis-naming `factual_gap` on a real `stuck_point`), which no orchestrator/threshold lever can fix (it's a detector-correctness issue, correctly scored false).
 
-**→ Independent review (core-engineer) should scrutinize:** (1) cooldown/TTL **parity** between `AttentionLayer` and the eval `runner` (the runner re-implements the rule since it drives gate+controller directly, not the full layer); (2) a fired interjection arming the cooldown (suppresses back-to-back ambient interjections — desirable, but sanity-check on real cadence); (3) the 8.0 s / 12.0 s values vs. real conversation pacing (calibrated on the seeded set; revisit on a captured corpus); (4) qa-gated modules unchanged (verified empty diff). Review brief in the T-503 TASKS.md Notes. **Do NOT mark `done` until review approves** (no `Completed:` yet).
+**Independent review (core-engineer): APPROVED** — blessed the mechanism and the 5–6 s cooldown range, noting the value is one eval-testable constant. Human then signed off on **6.0 s**. The reviewer's scrutiny points (cooldown/TTL parity between `AttentionLayer` and the eval `runner`; a fired interjection arming the cooldown; values vs. real pacing — revisit on a captured corpus; qa-gated modules unchanged) all cleared.
 
-**→ Remaining Phase 5:** T-504 (thermal/stability soak, sensing-engineer). After T-503 merges, Phase 5 has only T-504 left.
+**→ Remaining Phase 5:** T-504 (thermal/battery soak, sensing-engineer) only. T-503 is done.
 
 ---
 

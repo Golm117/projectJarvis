@@ -7,7 +7,7 @@
     "settle_seconds": 0.6,
     "politeness_gap_seconds": 2.0,
     "interjection_confidence_floor": 0.7,
-    "post_engagement_cooldown_seconds": 8.0,
+    "post_engagement_cooldown_seconds": 6.0,
     "pending_wall_ttl_seconds": 12.0
   },
   "timeline": [

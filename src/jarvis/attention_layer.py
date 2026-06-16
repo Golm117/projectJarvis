@@ -84,12 +84,18 @@ WAKE_WORD = "jarvis"
 # the detector flags as factual_gap @ 0.95 and would fire on — a false interjection
 # (Jarvis offering to look up its own near-rhetorical question). This window
 # suppresses ambient Path-B fires for a short, configurable interval after an
-# engagement. Calibrated on the eval (T-503): 8.0 s kills the seeded FP without
-# touching any legitimate fire (all seeded TPs are stand-alone walls with no
-# preceding engagement). Constructor-injected so qa-tuning owns the value in one
-# place; measured on the SimulatedClock, never a real sleep. A value of 0.0
-# disables the rule (no suppression window).
-DEFAULT_POST_ENGAGEMENT_COOLDOWN_SECONDS = 8.0
+# engagement. Calibrated on the eval (T-503): the seeded "What do you need?" FP
+# fires at 5.5 s after its engagement (speech_end 3.5 s + the 2 s politeness gap),
+# so the cooldown must exceed 5.5 s to kill it. The orchestrator's empirical sweep
+# confirmed 4/5/5.5 s leave the FP in (precision 0.60) while 6/7/8 s suppress it
+# (precision 0.75). 6.0 s is the human-chosen value (sign-off 2026-06-16): the most
+# responsive setting that works, a 0.5 s margin over the 5.5 s fire, and the same
+# 0.75 precision as 8 s — the cooldown only ever touches that one FP, no legitimate
+# fire is affected (all seeded TPs are stand-alone walls with no preceding
+# engagement). Constructor-injected so qa-tuning owns the value in one place;
+# measured on the SimulatedClock, never a real sleep. A value of 0.0 disables the
+# rule (no suppression window).
+DEFAULT_POST_ENGAGEMENT_COOLDOWN_SECONDS = 6.0
 
 # Pending-wall staleness TTL (T-503, carry-forward from the T-302/T-303 review).
 # tick() caches the wall verdict from the last ingest and re-evaluates it during

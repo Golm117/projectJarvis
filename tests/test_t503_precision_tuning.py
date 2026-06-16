@@ -88,7 +88,7 @@ def test_cooldown_suppresses_path_b_within_window() -> None:
     gate = TurnTakingGate(clock.now, politeness_gap_seconds=2.0)
     interjections: list[Interjection] = []
     layer = _layer(
-        clock, gate, post_engagement_cooldown_seconds=8.0, on_interjection=interjections.append
+        clock, gate, post_engagement_cooldown_seconds=6.0, on_interjection=interjections.append
     )
 
     # Jarvis engages first (a summon).
@@ -96,7 +96,7 @@ def test_cooldown_suppresses_path_b_within_window() -> None:
     assert interjections == []  # a summon is not a Path-B interjection
 
     # A wall surfaces shortly after, with a clean opening — but still inside the
-    # 8 s cooldown. It must NOT fire.
+    # 6 s cooldown. It must NOT fire.
     clock.advance(2.0)
     _open_gap(gate)
     layer.ingest(_utt("What do you need?", ts=clock.now()))
@@ -112,13 +112,13 @@ def test_cooldown_allows_path_b_after_window() -> None:
     gate = TurnTakingGate(clock.now, politeness_gap_seconds=2.0)
     interjections: list[Interjection] = []
     layer = _layer(
-        clock, gate, post_engagement_cooldown_seconds=8.0, on_interjection=interjections.append
+        clock, gate, post_engagement_cooldown_seconds=6.0, on_interjection=interjections.append
     )
 
     layer.ingest(_utt("Jarvis, what's the weather?", ts=clock.now()))  # engage at t=0
 
     # Move well past the cooldown, then a wall + clean opening → it fires.
-    clock.advance(9.0)  # > 8 s cooldown
+    clock.advance(7.0)  # > 6 s cooldown
     _open_gap(gate)
     layer.ingest(_utt("What was the conference date?", ts=clock.now()))
     clock.advance(2.5)
@@ -151,7 +151,7 @@ def test_a_fired_interjection_also_arms_the_cooldown() -> None:
     gate = TurnTakingGate(clock.now, politeness_gap_seconds=2.0)
     interjections: list[Interjection] = []
     layer = _layer(
-        clock, gate, post_engagement_cooldown_seconds=8.0, on_interjection=interjections.append
+        clock, gate, post_engagement_cooldown_seconds=6.0, on_interjection=interjections.append
     )
 
     # First wall fires (no prior engagement).
@@ -268,12 +268,14 @@ def test_pre_t503_baseline_was_below_target() -> None:
 def test_shipped_threshold_constants() -> None:
     """The chosen, eval-calibrated default values are what the module ships.
 
-    Cooldown 8.0 s: clears the 5.5 s mark the seeded FP fires at (margin), with no
-    legitimate fire affected. TTL 12.0 s: above the ~2 s politeness gap a real wall
-    fires within, below the 15 s stale opening — only catches a genuinely stale
-    wall. Unchanged thresholds: gap 2.0 / floor 0.70 / settle 0.6 (the sweep showed
-    no precision-improving change — see the T-503 review brief)."""
-    assert DEFAULT_POST_ENGAGEMENT_COOLDOWN_SECONDS == 8.0
+    Cooldown 6.0 s: clears the 5.5 s mark the seeded FP fires at (a 0.5 s margin),
+    with no legitimate fire affected — the human-chosen value (sign-off 2026-06-16),
+    most responsive setting that works; 6 and 8 s both score 0.75, 6.0 chosen for
+    responsiveness. TTL 12.0 s: above the ~2 s politeness gap a real wall fires
+    within, below the 15 s stale opening — only catches a genuinely stale wall.
+    Unchanged thresholds: gap 2.0 / floor 0.70 / settle 0.6 (the sweep showed no
+    precision-improving change — see the T-503 review brief)."""
+    assert DEFAULT_POST_ENGAGEMENT_COOLDOWN_SECONDS == 6.0
     assert DEFAULT_PENDING_WALL_TTL_SECONDS == 12.0
 
 

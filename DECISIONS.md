@@ -18,6 +18,17 @@ Keep entries short. One paragraph per field is plenty. If it takes more, it prob
 
 ---
 
+## 2026-06-16 — Post-engagement cooldown finalized at 6.0 s (human sign-off) — supersedes the 8.0 s default (T-503)
+
+**Decided by:** human (sign-off) — after the orchestrator's eval sweep + core-engineer's independent review (APPROVED)
+**Status:** accepted
+**Context:** The original T-503 decision (see ["Interjection precision tuned via context"](#2026-06-16--interjection-precision-tuned-via-context-cooldown--ttl-not-thresholds-floor--gap-unchanged-t-503) below) shipped `post_engagement_cooldown_seconds = 8.0` with a robustness margin and explicitly rejected 6.0 s as "fragile at the boundary." The orchestrator then swept the value empirically and core-engineer's independent review blessed the 5–6 s range, noting the value is one eval-testable constant.
+**Decision:** Finalize the post-engagement cooldown at **6.0 s** — the minimum that suppresses the 5.5 s "What do you need?" FP (speech_end 3.5 s + 2 s politeness gap), chosen for responsiveness over the 8.0 s robustness margin. Applied coherently: the `DEFAULT_POST_ENGAGEMENT_COOLDOWN_SECONDS` constant, the T-503 tests, the regenerated fixtures (`config.post_engagement_cooldown_seconds`), and `docs/qa/threshold-tuning.md`. **Precision unchanged at 0.75** (6 and 8 s both score 0.75 — the cooldown touches only that one FP; no legitimate fire has a preceding engagement). This supersedes the 8.0 s default in the entry below; all other T-503 decisions (TTL 12.0 s, orchestrator placement, no threshold change) stand.
+**Rationale:** The empirical sweep (4/5/5.5 s → 0.60; 6/7/8 s → 0.75) showed every value ≥ 6.0 s is precision-equivalent, so the only trade is responsiveness vs. boundary margin. The human chose responsiveness with a 0.5 s margin; the eval confirms it is not fragile in practice (the FP fire latency is deterministic on the seeded corpus). One constant, eval-testable, qa-gated modules untouched.
+**Alternatives considered:** Keeping 8.0 s (rejected by human sign-off — a less responsive cooldown for the same precision). The original entry's "6.0 s is fragile" concern (superseded — the boundary is deterministic and the value is independently reviewed + eval-pinned).
+
+---
+
 ## 2026-06-16 — Interjection precision tuned via context (cooldown + TTL), not thresholds; floor + gap unchanged (T-503)
 
 **Decided by:** Claude Code (qa-tuning) — T-503 (qa-gated + own task → independent review by core-engineer)

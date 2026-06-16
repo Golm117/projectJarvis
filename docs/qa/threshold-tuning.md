@@ -68,7 +68,7 @@ and all are clock-driven (measured on the `SimulatedClock`, never a real sleep).
 
 | Knob | Default | Lives in | Eval models via |
 |---|---:|---|---|
-| `post_engagement_cooldown_seconds` | **8.0** | `AttentionLayer` | `engagement` timeline moment + `config.post_engagement_cooldown_seconds` |
+| `post_engagement_cooldown_seconds` | **6.0** | `AttentionLayer` | `engagement` timeline moment + `config.post_engagement_cooldown_seconds` |
 | `pending_wall_ttl_seconds` | **12.0** | `AttentionLayer` | candidate `wall_detected_at` anchor + `config.pending_wall_ttl_seconds` |
 | `interjection_confidence_floor` | 0.70 (unchanged) | `SummonController` | `config.interjection_confidence_floor` |
 | `politeness_gap_seconds` | 2.0 (unchanged) | `TurnTakingGate` | `config.politeness_gap_seconds` |
@@ -100,17 +100,23 @@ a wall the detector spots is the user talking *to* Jarvis, not a wall hanging
   in `tick()` the pending wall is **held, not dropped** (it can still fire once the
   cooldown passes, unless its TTL drops it first).
 
-**Why 8.0 s.** The seeded FP fires at **t = 5.5 s** after the engagement (the
-"What do you need?" turn ends at t=3.5, + the 2.0 s politeness gap). The cooldown
-must exceed 5.5 s; it flips clean at 6.0 s. 8.0 s is a round value with margin
-above the boundary (not over-fit to the exact 5.5 s edge, which would be fragile)
-and reads as a realistic "just had an exchange with Jarvis" window. No legitimate
-fire is affected — none of the useful fixtures has a preceding engagement.
+**Why 6.0 s (human sign-off 2026-06-16).** The seeded FP fires at **t = 5.5 s**
+after the engagement (the "What do you need?" turn ends at t=3.5, + the 2.0 s
+politeness gap). The cooldown must exceed 5.5 s; it flips clean at 6.0 s. The
+orchestrator's empirical sweep confirmed 4/5/5.5 s leave the FP in (0.60) and
+6/7/8 s suppress it (0.75) — every value ≥ 6.0 s gives the same 0.75, because the
+cooldown only ever touches this one FP (no legitimate fire has a preceding
+engagement). **6.0 s is the human-chosen value:** the most responsive setting that
+works, with a 0.5 s margin over the 5.5 s fire. It was chosen over the earlier 8.0 s
+default (a larger robustness margin) for responsiveness — precision is identical at
+both. core-engineer's independent review blessed the 5–6 s range and confirmed the
+value is one eval-testable constant.
 
 | cooldown (s) | precision (ttl=12) |
 |---:|---:|
 | 0.0–5.5 | 0.60 (FP still fires) |
-| 6.0–10.0 | **0.75** (FP suppressed) |
+| **6.0** | **0.75** (FP suppressed — shipped value, human sign-off) |
+| 6.0–10.0 | 0.75 (FP suppressed; 8.0 was the prior default) |
 
 ---
 
@@ -135,7 +141,7 @@ wall that has genuinely gone stale. The staleness fixture
 at t=15; the valid TTL range that drops it while sparing real fires is ~(8, 15) s,
 and 12 s sits in the middle.
 
-| ttl (s) | precision (cooldown=8) |
+| ttl (s) | precision (cooldown=6, shipped) |
 |---:|---:|
 | 0.0 | 0.60 (stale wall fires late) |
 | 5.0–16.0 | **0.75** (stale wall dropped) |
