@@ -17,7 +17,28 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-15 (T-101 done → Phase 1 ASR runtime selected)
+## Current state — 2026-06-15 (T-102 + T-103 done → mic capture + Silero VAD live)
+
+**Phase:** phase_1 — Real ears (in progress). **T-102 (always-on mic capture loop + `AudioSource`) and T-103 (Silero VAD) are DONE** (sensing-engineer, this session). Suite **167 green** (135 baseline + 18 audio-source + 14 VAD), ruff clean. Worked on `main`, did NOT push.
+
+**What landed:**
+- **`src/jarvis/audio/` package** — the always-on ears in front of the frozen `TranscriptSource` seam.
+  - **`AudioSource` abstraction** (`source.py`, T-102): a `Protocol` yielding fixed-size `AudioFrame` (16 kHz mono float32, 512-sample/32 ms — Silero's geometry), so the VAD + all tests consume *frames*, never real hardware (the audio-path analogue of the core's injected-backend discipline). Bounded `RingBuffer` (overwrites oldest + counts `overflows` when full → no unbounded growth, the always-on memory invariant). `FakeAudioSource` (.silence/.tone/.from_pattern) = the hardware-free synthetic-frame stand-in.
+  - **`SoundDeviceMicSource`** (`mic.py`, T-102): real PortAudio always-on loop; callback→ring-buffer→consumer; lazy `sounddevice` import; typed `MicPermissionError`/`NoInputDeviceError` (never fabricates audio).
+  - **`SileroVad`** (`vad.py`, T-103): consumes `AudioSource` frames, debounces per-frame decisions into clean speech-start/speech-end **edges**, drives an injected `TurnTakingGate` (the frozen T-006 edge seam) — **emits edges, never timestamps; the gate owns the clock**, so the same gate + `SummonController` logic the Phase-0 `ScriptedSource` drove is now driven by real audio. Configurable threshold + hysteresis. `FrameClassifier` seam isolates torch: default `SileroFrameClassifier` (real model, lazy) / test `EnergyFrameClassifier` (RMS) so the gate-driving logic is testable with no torch/mic.
+- **LIVE MIC SMOKE TESTS RAN ✅ (permission already granted to this terminal — not fabricated):**
+  - T-102 raw capture: ~1.47 s, 46 frames / 23,552 samples @ 16 kHz mono, **0 overflows**, mean RMS 0.0021 (quiet room, real energy).
+  - T-103 `test_live_silero_vad_on_mic_optional` **PASSED (not skipped):** real Silero model + real mic, >0 frames processed end-to-end. (The optional live test self-skips if a future run has no device/permission.)
+- **New real deps** (not spike groups — this is the shipped always-on runtime now): `sounddevice` (+PortAudio bundled), `numpy`, `silero-vad` (+`torchaudio`; torch already present from the ASR/MLX stack). Two DECISIONS.md entries (mic capture + `AudioSource`; Silero VAD + `FrameClassifier` seam).
+- **module-map.md current:** new §"The audio sensing path (Phase 1)" documents the `AudioSource` abstraction + the VAD→gate **edge wiring**; package-layout + ownership reflect `audio/`.
+
+**→ T-104 (MicSource) is NEXT** (sensing-engineer): wire the VAD + `mlx-whisper base.en` into `Utterance` events behind the frozen `TranscriptSource` seam — feed ASR the concatenated frames of each speech segment (start→end window), stamp `Utterance.ts` from the VAD timeline, drive the orchestrator's shared gate with the same edges. Promotes only `mlx-whisper` from the `asr-spike` uv group into real deps. Then **T-105** (live-transcript smoke test). The orchestrator + gate do NOT change for the swap.
+
+**⚠️ Still pending with local-ml-engineer:** the **M5 ASR + Qwen2.5 concurrent always-on joint budget** (combined latency / memory / GPU contention / sustained thermal) must be measured *before either side freezes model sizes* — see the coexistence flag in `asr-spike.md` and the prior-state note below. `base.en` was chosen to protect SLM headroom.
+
+---
+
+## Prior state — 2026-06-15 (T-101 done → Phase 1 ASR runtime selected)
 
 **Phase:** phase_1 — Real ears (kicked off). **T-101 (ASR runtime spike) is DONE** (sensing-engineer, this session).
 

@@ -10,6 +10,7 @@ authors = [{ name = "project-jarvis" }]
 # silero-vad, mlx, etc.). Phase 0 is pure-logic + mocks and has none.
 dependencies = [
     "numpy>=2.4.6",
+    "silero-vad>=6.2.1",
     "sounddevice>=0.5.5",
 ]
 

@@ -34,12 +34,22 @@ from jarvis.audio.source import (
     FakeAudioSource,
     RingBuffer,
 )
+from jarvis.audio.vad import (
+    EnergyFrameClassifier,
+    FrameClassifier,
+    SileroFrameClassifier,
+    SileroVad,
+)
 
 __all__ = [
     "DEFAULT_FRAME_SAMPLES",
     "DEFAULT_SAMPLE_RATE",
     "AudioFrame",
     "AudioSource",
+    "EnergyFrameClassifier",
     "FakeAudioSource",
+    "FrameClassifier",
     "RingBuffer",
+    "SileroFrameClassifier",
+    "SileroVad",
 ]

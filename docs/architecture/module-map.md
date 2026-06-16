@@ -445,10 +445,43 @@ never reads a wall clock, and the same gate the Phase-0 `ScriptedSource` drove i
 driven live. (Live mic smoke-tested on the M5 at T-102: ~1.47 s real capture, 0
 overflows.) DECISIONS.md 2026-06-15 "Mic capture".
 
-### `SileroVad` segmenter (T-103) · *next*
-Consumes `AudioSource` frames, segments speech vs. silence, emits the gate's
-`on_speech_start()`/`on_speech_end()` edges (+ a generic edge callback). Threshold
-configurable. Feeds T-104 the frames of each speech segment for ASR.
+### `SileroVad` segmenter (T-103) · **done**
+Consumes `AudioSource` frames, segments speech vs. silence, and **drives the
+`TurnTakingGate`'s `on_speech_start()` / `on_speech_end()` edges** (+ an optional
+generic `on_edge` callback). It emits **edges, never timestamps** — the gate
+stamps them from *its own* injected clock, so this module aligns to the frozen
+T-006 edge seam without reshaping it. The VAD's own timing is in **frames** (each
+512 samples / 32 ms), so the audio path stays clock-free and the gate is the one
+clock owner. This is what replaces the by-hand `on_speech_start`/`on_speech_end`
+edges the Phase-0 `ScriptedSource` synthesized — the *same* gate + controller
+logic, now driven by real audio.
+```
+SileroVad(classifier: FrameClassifier | None = None,   # default = real Silero (lazy torch)
+          gate: TurnTakingGate | None = None,           # the edges are delivered here
+          on_edge: Callable[[str], None] | None = None, # "speech_start"/"speech_end"
+          speech_start_frames: int = 1,                 # debounce: ignore a 1-frame blip
+          silence_end_frames: int = 6)                  # endpoint hangover (~200 ms)
+process_frame(frame) -> None      # classify + fire a debounced edge if warranted
+run(source: AudioSource) -> None  # consume an AudioSource to exhaustion
+in_speech -> bool
+```
+**Hysteresis (configurable, in frame units):** a speech-start edge fires only
+after `speech_start_frames` consecutive speech frames; a speech-end edge only
+after `silence_end_frames` consecutive silence frames (an intra-word pause is not
+a turn boundary). The VAD-side hangover is deliberately **far shorter** than the
+gate's ~2 s politeness gap: the VAD owns *acoustic* segmentation, the gate owns
+*social* timing.
+
+**The `FrameClassifier` seam** (the audio-path analogue of `SummarizerBackend` /
+`WallBackend`): the one thing that truly needs the model — "is *this* frame
+speech?" — is injected. Default `SileroFrameClassifier` loads the real Silero VAD
+(torch) lazily and scores each frame; tests inject `EnergyFrameClassifier` (pure
+RMS ≥ threshold) so the **edge-sequencing logic that drives the gate** is tested
+deterministically with no torch and no mic. (Live-mic + real-model check ran at
+T-103 and passed.) `silero-vad`/torch recorded in DECISIONS.md.
+
+Feeds **T-104** (`MicSource`) the frames of each speech segment for ASR
+(`mlx-whisper base.en`), and stamps `Utterance.ts` from the VAD timeline.
 
 ---
 
@@ -491,10 +524,11 @@ src/jarvis/
 │   ├── transcript_source.py   #   TranscriptSource Protocol + ScriptedSource (drives clock + gate)
 │   ├── backends.py            #   re-exports SummarizerBackend/WallBackend + HeuristicSummarizerBackend (+ HeuristicWallBackend)
 │   └── engaged.py             #   EngagedResponder / VoiceOutput Protocols + PrintResponder/PrintVoice stand-ins
-├── audio/                     # T-102+  ✅ T-102 done (sensing-engineer, Phase 1)
-│   ├── __init__.py            #   re-exports AudioSource/AudioFrame/RingBuffer/FakeAudioSource
+├── audio/                     # T-102+  ✅ T-102, T-103 done (sensing-engineer, Phase 1)
+│   ├── __init__.py            #   re-exports AudioSource/AudioFrame/RingBuffer/FakeAudioSource + SileroVad/FrameClassifier
 │   ├── source.py             #   AudioSource Protocol + AudioFrame + RingBuffer + FakeAudioSource  (T-102)
-│   └── mic.py                #   SoundDeviceMicSource — real PortAudio always-on capture loop  (T-102)
+│   ├── mic.py                #   SoundDeviceMicSource — real PortAudio always-on capture loop  (T-102)
+│   └── vad.py                #   SileroVad + FrameClassifier seam (SileroFrameClassifier/EnergyFrameClassifier)  (T-103)
 └── attention_layer.py     # orchestrator  (T-008)  ✅ done
 ```
 
