@@ -405,8 +405,41 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
   - 2026-06-15T15:00Z — claimed; reading orientation docs.
   - 2026-06-15T16:00Z — shipped `src/jarvis/ml/` package (`__init__.py`, `qwen.py`, `summarizer.py`); 25 new tests in `tests/test_qwen_summarizer.py` (24 model-free + 1 live); promoted `mlx-lm` to real deps; wrote `docs/ml/slm-backend.md` and DECISIONS.md entry. Suite 207 green (182 baseline + 25), ruff clean.
 - **Notes:** DONE (not qa-tuning-gated — summarizer is not a gate/summon/wall module). **Handoff to T-203 (QwenWallBackend):** reuse `QwenModel` from `src/jarvis/ml/qwen.py` — construct once, inject into both `QwenSummarizerBackend` AND `QwenWallBackend`. The loader is ready; just add `src/jarvis/ml/wall.py` with a `QwenWallBackend` that parses the model's JSON into `WallVerdict`. Prompt design stub in `docs/ml/slm-backend.md` §wall. T-203 IS qa-tuning-gated (wall behavior is the success-metric-critical path).
-- (planned T-203) Local wall-detection backend — implement `detect_wall()` with structured output. [local-ml-engineer]
-- (planned T-204) Swap mock backend → local backend behind existing interfaces; re-run core tests green. [local-ml-engineer]
+### T-203 — Local wall-detection backend (QwenWallBackend)
+- **Status:** claimed
+- **Priority:** P0
+- **Role:** local-ml-engineer
+- **Owner:** local-ml-engineer
+- **Phase:** 2
+- **Created:** 2026-06-15T00:00:00Z
+- **Claimed:** 2026-06-15T17:00:00Z
+- **Completed:**
+- **Depends on:** T-202
+- **Description:** Implement `QwenWallBackend` in `src/jarvis/ml/wall.py` — the real `WallBackend.detect_wall(transcript, summary) -> WallVerdict` seam, backed by the shared `QwenModel` (Qwen2.5-3B-Instruct-4bit via MLX). The backend prompts the model to emit structured JSON `{is_wall, category, confidence, offer}` and parses it robustly into the frozen `WallVerdict` dataclass. Precision over recall: the prompt must be tight enough that confident non-walls are not flagged (the T-201 false positive — 3B flagged a clear decision as `explicit_ask` — must be addressed by prompt engineering, not a model upgrade). Confidence is surfaced raw; no speak threshold applied here (that is SummonController policy, T-007). On any JSON parse failure, return `WallVerdict.none()` — never raise. This task is QA-GATED: mark `review` (not `done`) and write a qa-tuning brief in Notes when done.
+- **Acceptance:**
+  - `src/jarvis/ml/wall.py` with `QwenWallBackend` implementing the `WallBackend` seam.
+  - `QwenWallBackend` takes an injected `QwenModel` (no own loader); reuses the shared instance from T-202.
+  - Model output parsed into `WallVerdict`; robust fallback to `WallVerdict.none()` on malformed/non-JSON output.
+  - `category` is `WallCategory.NONE` iff `is_wall` is `False` (invariant enforced).
+  - `confidence` surfaced raw in `[0.0, 1.0]` — no backend threshold.
+  - `offer` is `""` for a non-wall verdict.
+  - Model-free unit tests: message/prompt construction; JSON-to-WallVerdict parsing for each of 5 categories + malformed/edge inputs; WallVerdict invariants; Protocol conformance; graceful-fallback path. Suite stays model-free and green (207 baseline + new).
+  - Optional live test that self-skips when weights unavailable (mirrors T-202 live test).
+  - `~/.local/bin/uv run pytest -q` green; ruff clean.
+  - `docs/ml/slm-backend.md` updated with the real prompt design.
+  - Task marked `review` (NOT `done`) with a qa-tuning review brief in Notes.
+- **Progress:**
+  - 2026-06-15T17:00Z — claimed; read all orientation docs before work.
+- **Notes:** QA-GATED (wall behavior = interjection precision metric). Do NOT mark done — mark `review` and write the qa-tuning review brief here. T-204 (swap mock→local in orchestrator) depends on this.
+
+### T-204 — Swap mock backend → local backend in orchestrator
+- **Status:** open
+- **Priority:** P0
+- **Role:** local-ml-engineer
+- **Phase:** 2
+- **Created:** 2026-06-15T00:00:00Z
+- **Depends on:** T-203
+- **Description:** Swap mock backend → local backend behind existing interfaces; re-run core tests green. [local-ml-engineer]
 
 ### Phase 3 — Knowing when to speak
 - (planned T-301) Wire TurnTakingGate to real Silero VAD timing events. [core-engineer + sensing-engineer]
