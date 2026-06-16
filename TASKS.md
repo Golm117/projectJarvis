@@ -705,7 +705,33 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
   - 2026-06-16T13:00:00Z — implemented: `--forever`/`seconds=0` flag; shutdown watchdog thread; bounded deque; 9 new tests; 407 green; ruff clean. Committed.
 - **Notes:** DONE (not qa-gated). **Always-on command:** `python -m jarvis --live --forever` (add `--local-brain --voice` for full pipeline). **Stop:** Ctrl-C → clean exit 0, no traceback. **Shutdown mechanism:** daemon watchdog thread waits on `_shutdown_event`, then calls `mic.stop()` to unblock the `frames()` generator; signal handler + KeyboardInterrupt both set the event. **Bounded memory:** `collections.deque(maxlen=1000)` in always-on mode; bounded-mode `list` return contract unchanged. **Key design decision in DECISIONS.md:** watchdog-thread is the cleanest always-on shutdown without changing `AudioSource` protocol. **Live validation:** only validated via deterministic unit tests (injected shutdown event + fake mic); real Ctrl-C on the full pipeline was not run in this session (agent cannot send SIGINT to a foreground process). **→ Remaining Phase 5:** T-502 (capture/label tooling, qa-tuning), T-503 (threshold tuning, qa-tuning, qa-gated), T-504 (thermal/stability soak, sensing-engineer).
 
-- (planned T-502) Capture-and-label tooling for real conversations (ephemeral, opt-in). [qa-tuning]
+### T-502 — Capture-and-label tooling for real conversations (ephemeral, opt-in)
+- **Status:** claimed
+- **Priority:** P1
+- **Role:** qa-tuning
+- **Owner:** qa-tuning
+- **Phase:** 5
+- **Created:** 2026-06-16T00:00:00Z
+- **Claimed:** 2026-06-16T14:00:00Z
+- **Depends on:** T-010 (done — eval-plan fixture format), T-501 (done — always-on `run_live`)
+- **Description:** Build the capture-and-label tooling that turns a live conversation into the labeled fixtures the interjection-precision eval (T-010) and the threshold sweep (T-503) run on. Five parts:
+  1. **Capture mechanism** — record a live session's timeline into the eval-plan fixture schema: the ordered utterances + speech_start/speech_end edges (timing), every Path-B candidate (the `WallVerdict` the detector returned + whether `SummonController` fired or dropped it + why), and Path-A summons. Hook into `run_live` via the existing event callbacks + the gate edges + a verdict-observing wrapper around the wall backend — never reach into core internals. Output a fixture JSON in the eval-plan schema.
+  2. **Opt-in, ephemeral, local-only** — capture ONLY when explicitly enabled (a `--capture PATH` flag, off by default). Default: transcripts + events, not raw audio. No cloud, ever. Document the retention model (user owns the file; nothing auto-persists or leaves the machine).
+  3. **Labeling workflow** — a lightweight way to fill the placeholder ground-truth fields a raw capture emits (real wall? useful vs false? category? match-window) per the eval-plan schema. A tiny CLI + doc.
+  4. **Seed real fixtures** from this session's live material — the `factual_gap` true positive ("What was the date of the conference again?") and the borderline "What do you need?" `@ 0.95` likely-false-positive, plus a Path-A summon (excluded from precision).
+  5. **Wire the eval runner** — make `precision = useful ÷ total Path-B fires` computable over captured/seeded fixtures, deterministic on `SimulatedClock` + `FakeWallBackend`, per eval-plan.
+- **Acceptance:**
+  - `--capture PATH` flag in `__main__.py` + `run_live(capture_path=...)`; off by default; default path stays model-free + capture-free.
+  - Capture emits a fixture file in the eval-plan schema (timeline + candidates + config).
+  - Labeling workflow + doc; round-trip (capture → label → load) works.
+  - Seeded fixtures committed; the "What do you need?" case labeled (with the qa verdict).
+  - Eval runner computes precision over the seeded set deterministically (incl. a false-positive case → precision < 1.0).
+  - Tests: capture serialization round-trip, labeling fields, precision computation over a seeded fixture; no mic/model/network in `tests/`; suite green; ruff clean.
+  - NOT qa-gated (capture/label/eval TOOLING + fixtures; no change to TurnTakingGate/SummonController/WallDetector or any threshold — that's T-503).
+- **Progress:**
+  - 2026-06-16T14:00:00Z — claimed; orientation complete (eval-plan, live.py, types, gate, controller, attention_layer, fakes all read).
+- **Notes:** Capture observes — never alters — the pipeline: a `CaptureRecorder` wraps the wall backend (to see every verdict, fired or dropped) and subscribes to the existing `on_*` callbacks + gate edges. T-503 will sweep thresholds against the eval runner this builds. The "What do you need?" case is the kind of false-positive T-503 must tune away.
+
 - (planned T-503) Tune politeness-gap + confidence threshold against the interjection-precision metric. [qa-tuning]
 - (planned T-504) Stability / thermal / battery pass for sustained always-on. [sensing-engineer]
 
