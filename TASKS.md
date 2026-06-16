@@ -734,7 +734,33 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
   - 2026-06-16T15:30:00Z — built `src/jarvis/eval/` (fixture/capture/label/runner/seed); `--capture PATH` flag in live.py + __main__.py; seeded corpus `docs/qa/fixtures/*.json`; 32 new tests; 439 green; ruff clean. Committed `55c63f0`.
 - **Notes:** **DONE — NOT qa-gated** (tooling + fixtures only; no gate/summon/wall/threshold change). **What T-503 now has to tune against:** the eval runner `jarvis.eval.runner.run_fixtures(...)` computes `precision = useful ÷ total Path-B fires` deterministically (SimulatedClock + real gate/controller, no model), holding the labeled `docs/qa/fixtures/*.json` fixed and overriding each fixture's `config` block (the 3 knobs: politeness_gap_seconds, interjection_confidence_floor, settle_seconds) to sweep. **Seeded set scores precision 0.60 on shipped defaults** (5 fires, 3 useful — the FP cases present). **Capture** (`--capture PATH`, opt-in/ephemeral/local-only/never-audio) observes a live run via a recording-gate subclass + a pass-through wall-backend wrap + the on_* callbacks, emitting raw (UNLABELED) candidates **including dropped ones**; the `jarvis.eval.label` CLI fills ground truth. **qa verdict on "What do you need?": FALSE** (directed at Jarvis inside a summon exchange, not an unanswered wall; precision-first). **T-503 note:** both the TP and that FP are `factual_gap @ 0.95` (Qwen near-binary confidence) so the floor can't separate them — the lever is context (is the wall inside a just-engaged exchange?), not the threshold. **Carry-forward:** add the `_pending_wall` staleness fixture (T-302/T-303 watch-item) + decide on a TTL (qa-gated). Full doc: `docs/qa/capture-and-label.md`. **Found pre-existing T-501 bug** (spawned as a separate task): `--forever` in `__main__.py` passes `const=` to a `store_true` action → `python -m jarvis --live`/`--help` crash on startup; blocks actually *running* `--capture` until fixed.
 
-- (planned T-503) Tune politeness-gap + confidence threshold against the interjection-precision metric. [qa-tuning] — **the harness is ready:** sweep `jarvis.eval.runner.run_fixtures` over `docs/qa/fixtures/*.json`, overriding each fixture's `config` block; baseline precision 0.60. Add the staleness fixture (qa-gated TTL decision) per the T-502 carry-forward. qa-gated.
+### T-503 — Tune interjection precision (post-engagement suppression + thresholds + _pending_wall TTL)
+- **Status:** claimed
+- **Priority:** P0
+- **Role:** qa-tuning
+- **Owner:** qa-tuning
+- **Phase:** 5
+- **Created:** 2026-06-16T00:00:00Z
+- **Claimed:** 2026-06-16T16:00:00Z
+- **Depends on:** T-502 (done — eval runner + seeded fixtures)
+- **Description:** The success-metric task. Raise interjection precision on the seeded eval (baseline 0.60) by killing the "What do you need?" false positive without zeroing legitimate fires. Full tune (human-approved scope), measured against the T-502 eval before/after every change:
+  1. **Post-engagement suppression rule** — suppress ambient Path-B interjections for a short configurable cooldown right after a summon/engagement (the user is in a dialogue *with* Jarvis, not hitting a wall *between humans*). This is the primary fix for the FP. Lives in the orchestrator (`AttentionLayer`) + mirrored in the eval runner; threaded through a new `ENGAGEMENT` timeline moment so the eval can model it.
+  2. **Threshold sweep** — sweep `politeness_gap_seconds` / `interjection_confidence_floor` / `settle_seconds` via `run_fixtures` config-override; report the precision surface; change a default only if the eval supports it.
+  3. **`_pending_wall` staleness TTL** — the continuous loop's cached pending wall has no TTL; add a configurable TTL so a stale wall can't fire after the conversation moved on. Add a staleness fixture.
+  4. **Declarative `factual_gap` recall** — ASSESS, don't blindly chase (more fires can hurt precision); change the prompt only if precision holds, else defer to v1 with evidence.
+  5. **Confidence-floor recalibration** — settle with the eval + the near-binary-confidence finding.
+- **Acceptance:**
+  - Before/after precision reported on the seeded set for every change; precision rises (FP killed) without zeroing legitimate fires.
+  - Post-engagement cooldown is a configurable constant, testable on `SimulatedClock`.
+  - `_pending_wall` TTL configurable + a staleness fixture confirms it prevents a stale late fire without dropping legitimate fires.
+  - Threshold sweep results reported; any default change justified by the eval.
+  - Carried-forward items (declarative recall, confidence floor) decided change-vs-defer with evidence.
+  - Suite green (441 baseline + new); ruff clean; model-free.
+  - **qa-gated AND qa-tuning's own task → independent review by core-engineer before merge.** Status `review`, NOT `done`.
+- **Progress:**
+  - 2026-06-16T16:00:00Z — claimed; orientation complete (eval runner/fixtures/seed, summon_controller, attention_layer, gate, types, NOTES/DECISIONS/memory all read). Baseline confirmed: precision 0.60 (5 fires, 3 useful, 2 false: the "What do you need?" FP + the wrong-category FP).
+- **Notes:** **IN REVIEW — needs independent review by core-engineer** (qa-gated + qa-tuning's own task). Review brief lands here on completion.
+
 - (planned T-504) Stability / thermal / battery pass for sustained always-on. [sensing-engineer]
 
 ### T-505 — Real-room ASR quality pass: upgrade to small.en + noise-segment filtering
