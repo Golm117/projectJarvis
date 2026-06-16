@@ -837,3 +837,25 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
   - 2026-06-16T00:00Z — claimed; orientation complete.
   - 2026-06-16T00:00Z — implemented small.en default + _is_lexical filter; 51 new tests; 398 green; ruff clean; joint budget measured (775 ms, 1225 ms margin); live tested on built-in mic device 6; docs/asr-spike.md + DECISIONS.md updated; committed.
 - **Notes:** DONE. NOT qa-gated (audio/sensing path only — does not touch TurnTakingGate, SummonController, WallDetector, or any interjection threshold). **Before:** base.en on built-in mic: "Jarvis"→"Germans", garbage segments "!", "Mm.", "service.!!!!!!!!!!". **After:** small.en + filter: "Hey Jarvis, can you hear me?" transcribes exactly; "Yes Jarvis." passes; "What was the date of the conference again?" fires factual_gap @ 0.95; garbage segments blocked by filter. Joint budget: small.en 80 ms ASR + Qwen 697 ms = 775 ms total, 1225 ms margin vs 2 s budget. Honest caveat: `--say` loopback is cleaner than natural far-field voice; the "Germans" mishearing is a natural-voice/room-noise phenomenon that the upgrade addresses by model quality, but cannot be fully replicated with synthetic loopback. Filter confirmed working end-to-end on the pipeline. Files changed: src/jarvis/audio/mic_source.py, tests/test_t505_asr_quality.py, tests/test_mic_source.py, docs/audio/asr-spike.md, DECISIONS.md.
+
+### T-506 — VAD pre-roll / lookback buffer (capture speech onset)
+- **Status:** claimed
+- **Priority:** P1
+- **Role:** sensing-engineer
+- **Owner:** sensing-engineer
+- **Phase:** 5
+- **Created:** 2026-06-16T20:00:00Z
+- **Claimed:** 2026-06-16T20:00:00Z
+- **Completed:**
+- **Depends on:** T-104 (done), T-505 (done)
+- **Description:** Real-user field report: the pipeline drops the start of utterances. Verbatim example — user said "I wonder if my volume is too loud" but the transcript was "seems too loud." The first words are lost and Whisper mistranscribes the truncated remainder. Root cause: `MicSource._on_edge` initializes `_segment_frames = []` at the `speech_start` edge; sub-threshold onset frames (the quiet beginning of a sentence, before Silero crosses its threshold) are never recorded. Fix: add a rolling pre-roll deque (`collections.deque(maxlen=K)`) that receives every frame regardless of segment state; when `speech_start` fires, seed `_segment_frames` from the deque so the lookback audio is included in what goes to ASR. Size: ~300–500 ms (~10–16 frames at 32 ms/frame). Configurable constant. Do NOT change the Silero threshold.
+- **Acceptance:**
+  - `MicSource` maintains a bounded pre-roll deque (every frame appended; bounded by `maxlen`); when `speech_start` fires the deque's contents seed `_segment_frames`.
+  - Pre-roll size configurable constant `DEFAULT_PRE_ROLL_FRAMES = 10` (~320 ms); also constructor-injectable.
+  - Tests (model-free, `FakeAudioSource`): (a) segment includes pre-roll frames that preceded the edge; (b) pre-roll deque is bounded (`maxlen`); (c) configurable size; (d) pre-roll smaller than available history works; (e) existing single/multi/empty-segment + gate-edge tests still pass.
+  - Suite stays green (454 baseline + new); ruff clean.
+  - NOT qa-gated (VAD/MicSource onset buffer only; no change to TurnTakingGate/SummonController/WallDetector/any threshold).
+  - Live re-test on M5 built-in mic: verbatim before/after for a soft-onset sentence; honest result.
+- **Progress:**
+  - 2026-06-16T20:00:00Z — claimed; orientation complete (mic_source.py, vad.py, source.py, NOTES, TASKS, asr-spike.md all read).
+- **Notes:**
