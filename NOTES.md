@@ -17,7 +17,35 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-15 (hotfix: live-run mic teardown race)
+## Current state — 2026-06-15 (T-201 done → Qwen2.5 size frozen; Phase 2 active)
+
+**Phase:** phase_2 — Local understanding (ACTIVE). T-201 (Qwen2.5/MLX runtime spike + joint ASR coexistence budget) is **DONE** (local-ml-engineer, this session). Suite **182 green**, ruff clean. On `main`, not pushed.
+
+**What landed:**
+- **`docs/ml/qwen-coexistence-spike.md`** — full spike doc: methodology, exact models/quant used, audio clip provenance, isolated + joint + sustained measurements, 4-scenario wall-detection quality matrix, recommendation + honesty box. Matches the rigor of `docs/audio/asr-spike.md`.
+- **Two DECISIONS.md entries** — Qwen2.5-3B selected + dep-group policy for mlx-lm.
+- **`pyproject.toml`** — `mlx-lm` added to `slm-spike` uv dependency group (isolated; NOT yet in real deps).
+- **`uv.lock`** updated (mlx-lm + transformers/tokenizers/sentencepiece/safetensors/protobuf).
+
+**Key findings:**
+- **1.5B eliminated.** Returns `is_wall: false` with confidence 0.0 on every input — including unambiguous `explicit_ask` cases. Non-functional for detect_wall regardless of latency/memory.
+- **3B selected: `mlx-community/Qwen2.5-3B-Instruct-4bit`.** 3/4 correct in 4-scenario quality test. Joint ASR+SLM budget: **657 ms median** (ASR 40 ms + summarize 250 ms + detect_wall 366 ms) vs 2,000 ms → **1,343 ms margin**. Peak joint RSS 3,271 MB on 64 GB machine. No thermal throttling.
+- **ASR stays `base.en`** — SLM already dominates at ~600 ms; ASR is only ~40 ms; `small.en` saves nothing meaningful while adding memory pressure.
+- **MUST use `tokenizer.apply_chat_template`** (system/user messages) — NOT raw string prompts. Raw prompts caused repetition/degradation on both models AND inflated latency (~2× slower on 3B summarize).
+- **One known false positive** in 3B wall detection: it flags a clear decision ("PR in 10 min") as `explicit_ask`. This is a prompt-engineering gap T-203 will close — not a fundamental model capability failure.
+
+**⚠️ For T-202/T-203 (next tasks):**
+- Load the model once at startup (not per-call) — model loading takes ~300 ms (cold, from cache).
+- Share one loaded model+tokenizer instance between `summarize()` and `detect_wall()` (they run sequentially).
+- Use `mlx_lm.generate(model, tokenizer, prompt=..., max_tokens=..., verbose=False)`.
+- `mlx-lm` must be promoted from `slm-spike` group into real `[project.dependencies]` at T-202 time.
+- `docs/ml/slm-backend.md` (the role spec's "first task" doc) still needs to be written — do it at T-202 time before implementing.
+
+**→ Phase 2 continues:** T-202 (local summarizer backend) is **UNBLOCKED** — pick it up next.
+
+---
+
+## Prior state — 2026-06-15 (hotfix: live-run mic teardown race)
 
 **`python -m jarvis --live` shutdown crash fixed.** It raised `AttributeError: 'NoneType' object has no attribute 'close'` in `mic.py` `stop()`: the live countdown timer and the main-thread context-manager teardown both called `stop()`, both passed the `is not None` check, and one nulled `self._stream` mid-flight → the other dereferenced `None`; the double stop/close also emitted the PaMacCore `-50`. **Fix:** `stop()` now atomically *claims* the stream under a new `self._lock` (exactly one caller stops/closes it) and suppresses teardown errors. 3 regression tests (idempotent stop, suppressed teardown error, 8-thread concurrent stop). Suite **182 green**, ruff clean. The residual `PaMacCore … err='-50'` line that may still print is **C-level CoreAudio stderr from PortAudio on AUHAL teardown — not a Python error** (the run exits 0); deliberately NOT fd-suppressed (redirecting fd 2 is thread-unsafe here and would mask real audio errors). Fixed directly by the orchestrator (not delegated) — `mic.py` is sensing-engineer's lane but not a review-gated module. On `main`, not pushed.
 

@@ -18,6 +18,24 @@ Keep entries short. One paragraph per field is plenty. If it takes more, it prob
 
 ---
 
+## 2026-06-15 — Qwen2.5-3B-Instruct-4bit selected as Phase-2 SLM; ASR stays base.en (T-201)
+
+**Decided by:** Claude Code (local-ml-engineer) — T-201 spike
+**Status:** accepted
+**Context:** T-201 measured both Qwen2.5-1.5B and 3B (4-bit quantized, MLX-community) in isolation and jointly with mlx-whisper base.en on this M5 Pro (64 GB). Full methodology, numbers, and the 4-scenario quality matrix are in `docs/ml/qwen-coexistence-spike.md`.
+**Decision:** Use **`mlx-community/Qwen2.5-3B-Instruct-4bit`** as the Phase-2 model for both `summarize()` (T-202) and `detect_wall()` (T-203). Keep ASR at **`base.en`** — no move to `small.en`. Both models must use `tokenizer.apply_chat_template` with proper system/user messages (NOT raw string prompts — raw prompts produced repetition and degraded quality on both model sizes).
+**Rationale:** 1.5B is functionally broken for `detect_wall`: it returns `is_wall: false` with confidence 0.0 for every input tested, including unambiguous `explicit_ask` cases ("can someone help me understand X?"). The wall detection task — the success-metric-critical path — eliminates 1.5B regardless of its latency (484 ms joint) or memory (1.3 GB) advantages. 3B gets 3/4 wall scenarios correct, produces proper JSON, calibrated confidence (0.8–0.9), and natural offers. The one false positive (flagging a decision as `explicit_ask`) is a prompt-engineering issue that T-203 will address. Joint budget: 3B clears at **657 ms** (median, 5 warm runs) vs the ~2 s offer budget — 1,343 ms margin. Memory: 3B isolated 2,156 MB + ASR 463 MB = well within 64 GB. Sustained: no thermal throttling, flat drift over 10 consecutive joint runs. ASR stays `base.en` because the SLM already dominates at ~600 ms and ASR contributes only ~40 ms; `small.en` saves negligible time while adding memory pressure. The joint budget margin is comfortable.
+**Alternatives considered:** 1.5B (rejected — non-functional for detect_wall, the success-metric-critical task). 7B-Instruct-4bit (not benchmarked — 3B's quality issues are prompt-engineering gaps, not fundamental capability failures; escalate to 7B only if T-203 prompt work can't close the precision gap, which requires a human decision on the latency trade-off). `small.en` ASR (deferred — only move up if captured-audio WER at `base.en` climbs in Phase 5 T-502 *and* the joint budget still clears comfortably). Raw-string prompts without chat template (rejected — produced repetition and degraded quality; these are instruction-tuned models that require their chat template format).
+
+## 2026-06-15 — `mlx-lm` in isolated `slm-spike` uv group; promoted to real deps at T-202 (T-201)
+
+**Decided by:** Claude Code (local-ml-engineer) — T-201
+**Status:** accepted
+**Context:** T-201 is a spike (measurement only, no implementation). Following the same dep-isolation discipline as the `asr-spike` group (DECISIONS.md "Spike/heavy deps go in an isolated `asr-spike` uv group").
+**Decision:** `mlx-lm` (+ `transformers`, `tokenizers`, `sentencepiece`, `safetensors`, `protobuf`) added to the **`slm-spike` uv dependency group** (`uv add --group slm-spike mlx-lm`). NOT in `[project.dependencies]` yet. When T-202 implements the live `SummarizerBackend`, promote `mlx-lm` into real deps (same pattern as `mlx-whisper` at T-104). Record that promotion in a new DECISIONS.md entry at T-202 time.
+**Rationale:** Keeps the package's runtime dependency surface honest until the backend is actually implemented. Spike deps install only with `uv run --group slm-spike`. The default `uv run pytest` suite never needs Qwen weights — this is enforced by the dep group isolation and by keeping the benchmark harness out of `tests/`.
+**Alternatives considered:** Adding to real deps now (rejected — same reasoning as asr-spike isolation; the backend doesn't exist yet). Adding to `dev` group (rejected — this is spike/model tooling, not dev infrastructure like pytest/ruff).
+
 ## 2026-06-15 — Live `Utterance.ts` must share the orchestrator's clock; `--live` smoke entry (T-105)
 
 **Decided by:** Claude Code (sensing-engineer) — T-105

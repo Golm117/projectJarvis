@@ -358,25 +358,27 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 ### Phase 2 — Local understanding
 
 ### T-201 — Qwen2.5/MLX runtime spike + joint ASR coexistence budget
-- **Status:** claimed
+- **Status:** done
 - **Priority:** P0
 - **Role:** local-ml-engineer
 - **Owner:** local-ml-engineer
 - **Phase:** 2
 - **Created:** 2026-06-15T00:00:00Z
 - **Claimed:** 2026-06-15T12:00:00Z
-- **Completed:**
+- **Completed:** 2026-06-15T14:00:00Z
 - **Depends on:** T-101
 - **Description:** Empirically select the Qwen2.5/MLX model size (candidates: 1.5B vs 3B, 4-bit quantized, MLX-community builds) for the always-on summarize/detect_wall backends. This spike folds in the mandatory joint M5 budget measurement that was flagged repeatedly in `docs/audio/asr-spike.md`: measure ASR (mlx-whisper base.en) + Qwen2.5 running concurrently on the same utterance, both as MLX/Metal consumers on the unified-memory GPU. Deliver a model-size recommendation and an ASR base.en-vs-small.en verdict. NOT an implementation — T-202/T-203 pick up the real backends.
 - **Acceptance:**
-  - `docs/ml/qwen-coexistence-spike.md` with: exact model repos/quant used, audio clip provenance, per-candidate quality+latency (isolated), joint budget numbers (combined latency/memory/contention/sustained), recommendation, and honesty box.
-  - `DECISIONS.md` entry for the Qwen2.5 size choice (or `blocked` with reason) and the ASR base.en/small.en verdict.
-  - `mlx-lm` added via `uv add --group slm-spike` (isolated group, not core deps yet).
-  - Benchmark harness kept out of default pytest path; suite stays 182 green; ruff clean.
-  - Real measured numbers on the real M5 — nothing fabricated.
+  - `docs/ml/qwen-coexistence-spike.md` with: exact model repos/quant used, audio clip provenance, per-candidate quality+latency (isolated), joint budget numbers (combined latency/memory/contention/sustained), recommendation, and honesty box. ✅
+  - `DECISIONS.md` entry for the Qwen2.5 size choice and the ASR base.en/small.en verdict. ✅
+  - `mlx-lm` added via `uv add --group slm-spike` (isolated group, not core deps yet). ✅
+  - Benchmark harness kept out of default pytest path; suite stays 182 green; ruff clean. ✅
+  - Real measured numbers on the real M5 — nothing fabricated. ✅
 - **Progress:**
   - 2026-06-15T12:00Z — claimed; expanded from Phase-2 one-liner; reading orientation docs before work.
-- **Notes:** The joint budget is the whole point — do NOT stub ASR. Use `mlx-whisper base.en` via `mlx_whisper.transcribe`. Synthesize audio with macOS `say` (same technique as asr-spike). Keep benchmark harness in `/tmp/` or `scripts/` — NOT under `tests/` (the suite must never need Qwen weights). Handoff to T-202 once size is frozen.
+  - 2026-06-15T13:00Z — `mlx-lm` added to `slm-spike` group; both model downloads complete; isolated + joint + sustained measurements done on this M5 (real numbers, nothing fabricated).
+  - 2026-06-15T14:00Z — spike doc written; DECISIONS.md entries added; TASKS.md updated; suite 182 green; ruff clean.
+- **Notes:** DONE (not a mandatory-review trigger — spike only, no qa-tuning-gated module changed). **Recommendation frozen:** `mlx-community/Qwen2.5-3B-Instruct-4bit`; ASR stays `base.en`. **1.5B eliminated:** returns `is_wall: false` on every test including unambiguous `explicit_ask` — non-functional for detect_wall. **3B joint budget: 657 ms median** (ASR 40 ms + summarize 250 ms + detect_wall 366 ms) vs 2,000 ms offer budget → 1,343 ms margin. **MUST use chat template** (tokenizer.apply_chat_template) — raw prompts degrade quality and inflate latency. Peak joint RSS 3,271 MB (64 GB machine). No thermal throttling. `mlx-lm` promoted from `slm-spike` group to real deps at T-202. **→ T-202 (local summarizer backend) is UNBLOCKED.** Also produce `docs/ml/slm-backend.md` (per role spec "first task") at T-202 time.
 
 - (planned T-202) Local summarizer backend — implement `summarize()` on Qwen2.5/MLX. [local-ml-engineer]
 - (planned T-203) Local wall-detection backend — implement `detect_wall()` with structured output. [local-ml-engineer]
