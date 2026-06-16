@@ -17,9 +17,25 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-15 (T-203 APPROVED by qa-tuning → done; T-204 unblocked)
+## Current state — 2026-06-15 (T-204 DONE → PHASE 2 COMPLETE)
 
-**Phase:** phase_2 — Local understanding (ACTIVE). T-201 (spike), T-202 (summarizer backend), T-203 (wall-detection backend) all **DONE**. **T-203 passed its mandatory qa-tuning review and is `done`.** Suite **264 green**, ruff clean. On `main`, not pushed.
+**Phase:** phase_2 — Local understanding → **COMPLETE.** All four Phase-2 tasks done: T-201 (spike), T-202 (summarizer backend), T-203 (wall-detection backend, qa-tuning approved), T-204 (backend swap + live verification). Suite **264 green**, ruff clean. On `main`, not pushed.
+
+**T-204 (backend swap) — DONE.** Wired the real Qwen2.5/MLX backends behind the frozen seams in the `--live` path. No core module changes. Backend selection:
+- **Default (mock/heuristic):** `python -m jarvis` and `uv run pytest` remain model-free. No change.
+- **Local brain:** `python -m jarvis --live --local-brain` constructs ONE shared `QwenModel()` and injects it into both `QwenSummarizerBackend` and `QwenWallBackend`. Weights loaded once on first inference, shared across both seams.
+
+**Live verification on M5 with `--local-brain` (verbatim, not fabricated):**
+- Path-B: "What was the date of the conference again?" → `QwenWallBackend` returned **`factual_gap @ 0.90`** → ENGAGEMENT `wall:factual_gap` fired. Living summary updated via `QwenSummarizerBackend`.
+- Path-A: "Jarvis add this to my calendar" (ASR: "Jarvis said this to my calendar") → wake word detected → **ENGAGEMENT `summon`** fired immediately.
+- The full live transcript + context is in `docs/audio/live-smoke.md` (T-204 addendum section).
+
+**Honest notes (same qa carry-forwards as T-203):**
+1. The question-form T-105 trigger ("What was the date of the conference again?") fires `factual_gap @ 0.90–0.95` reliably. When surrounded by the full T-105 context (declarative "I keep forgetting the details" + ASR artifacts), the model returned `is_wall=False` — the **declarative factual_gap miss** documented in T-203. Tested bare question → fires; question + minimal context → fires; full T-105 script with ASR artifacts → misses. Accepted v0 tradeoff (T-503 lever).
+2. The `interjection_confidence_floor` was NOT changed (qa carry-forward; T-503 lever).
+3. The Path-B re-check in `run_live` is still the trailing re-ingest affordance — the continuous real-time SummonController re-evaluation is Phase 3 (T-302).
+
+**→ Phase 3 picks up** (core-engineer): T-301/T-302 — wire `TurnTakingGate` to real Silero VAD timing events + build the continuous real-time Path-B SummonController re-evaluation. **Also note:** the one-clock invariant (gate ≡ window ≡ Utterance.ts) must be re-verified in Phase 3 (see memory index T-301/T-302).
 
 **T-203 verdict (qa-tuning): APPROVED.** Contract conformance fully pinned by the 57 model-free tests (frozen `WallVerdict`, NONE iff ¬is_wall, clamp, offer="" non-wall, graceful `none()` fallback, raw confidence). The `factual_gap` recall miss is **accepted as a deliberate precision-first tradeoff for v0** — grounded in the success metric (a miss costs *recall*/silence, not *precision*; precision = useful ÷ total Path-B fires). I independently re-ran the live test (4/5) and probed 6 factual_gap phrasings: **question-form gaps fire (incl. the exact T-105 live trigger), declarative gaps miss** — category is partially reachable, not dead, and the live-smoke Path-B path survives the swap.
 

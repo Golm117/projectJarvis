@@ -18,6 +18,17 @@ Keep entries short. One paragraph per field is plenty. If it takes more, it prob
 
 ---
 
+## 2026-06-15 — Backend selection: `--local-brain` / `--mock-brain` flag on the `--live` path (T-204)
+
+**Decided by:** Claude Code (local-ml-engineer) — T-204
+**Status:** accepted
+**Context:** T-204 wires the real Qwen2.5/MLX backends behind the frozen `SummarizerBackend` / `WallBackend` seams. The default must remain model-free so that `uv run pytest` and `python -m jarvis` never load MLX or weights, and the test suite stays at 264 without touching any core module.
+**Decision:** `run_live()` gains a `local_brain: bool = False` parameter. When `False` (default), `AttentionLayer.build()` receives `None` for both backend params and uses the heuristic mocks as before. When `True`, one shared `QwenModel()` is constructed, injected into both `QwenSummarizerBackend` and `QwenWallBackend`, and passed to `AttentionLayer.build()`. `__main__.py` exposes this as mutually-exclusive `--local-brain` / `--mock-brain` flags (default is mock). `_build_local_brain_backends()` is a module-private helper that does the construction; its imports of `jarvis.ml.*` are inside the function body so the module itself remains import-clean. All MLX weight loading stays lazy inside `QwenModel._ensure_loaded()`.
+**Rationale:** `AttentionLayer.build()` already accepted `summarizer_backend` / `wall_backend` kwargs (the frozen seam discipline); the swap is entirely at the instantiation site, requiring zero core module changes. A boolean parameter with a clear flag pair (`--local-brain` / `--mock-brain`) is the minimal, reversible mechanism. The default-mock invariant is preserved: the 264-test suite passes model-free, and `python -m jarvis` still demos with no model.
+**Alternatives considered:** Always-local in `--live` mode (rejected — breaks the quick sanity-check use of `--live` without the ~300 ms model cold-load). An env-var toggle (rejected — flags are more explicit and auditable in CLI usage). A `--backend {mock,qwen}` string flag (considered; the mutually-exclusive bool group is more concise for only two options).
+
+---
+
 ## 2026-06-15 — QwenWallBackend prompt: precision-over-recall + T-201 false-positive fix (T-203)
 
 **Decided by:** Claude Code (local-ml-engineer) — T-203

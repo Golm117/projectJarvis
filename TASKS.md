@@ -468,16 +468,21 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
   5. **Test gap:** No test covers the case where the model produces `is_wall=True` with confidence exactly 0.70 (the SummonController floor boundary). That boundary test lives in T-007/SummonController tests; the backend just surfaces raw — but qa-tuning may want to confirm the end-to-end 0.70 path in an integration test.
 
 ### T-204 — Swap mock backend → local backend in orchestrator
-- **Status:** claimed
+- **Status:** done
 - **Priority:** P0
 - **Role:** local-ml-engineer
 - **Owner:** local-ml-engineer
 - **Phase:** 2
 - **Created:** 2026-06-15T00:00:00Z
 - **Claimed:** 2026-06-15T20:00:00Z
+- **Completed:** 2026-06-15T21:00:00Z
 - **Depends on:** T-203 ✅ (done — qa-tuning approved 2026-06-15T19:30Z; **T-204 is now UNBLOCKED**)
 - **Description:** Swap mock backend → local backend behind existing interfaces; re-run core tests green. Construct ONE shared `QwenModel()` at startup and inject the same instance into both `QwenSummarizerBackend` (T-202) and `QwenWallBackend` (T-203) — no double-load. The swap touches neither `WallDetector`/`SummonController` (frozen seams) nor any threshold. [local-ml-engineer]
-- **Notes:** **qa-tuning carry-forwards from the T-203 review (for the swap + the live re-check):** (1) The Qwen backend has **partial factual_gap recall** — declarative gaps ("I don't remember…") MISS, question-form gaps fire. The T-105 live-smoke Path-B trigger ("What was the date of the conference again?") **still fires** factual_gap @ 0.95 under Qwen, so the live demo path is preserved across the swap — but if you re-run any live smoke that relied on a *declarative* factual_gap line, expect silence (that's the accepted v0 tradeoff, deferred to T-503), not a regression. (2) The model emits **near-binary confidence (~0.95 on fires)** so the 0.70 floor is inert for this backend — fine for the swap; recalibration is T-503. Do NOT change the floor in T-204 (qa-gated).
+- **Progress:**
+  - 2026-06-15T20:00Z — claimed; read all orientation docs.
+  - 2026-06-15T20:30Z — wired `_build_local_brain_backends()` in `live.py` (one shared `QwenModel`, injected into both backends). Added `local_brain: bool = False` param to `run_live()`. Added `--local-brain` / `--mock-brain` mutually-exclusive flags to `__main__.py`. Zero core module changes. 264 tests pass, ruff clean. Committed feat.
+  - 2026-06-15T21:00Z — ran live verification on M5 with `--local-brain --device 5`: Path-B fired `factual_gap @ 0.90` → ENGAGEMENT `wall:factual_gap` on "What was the date of the conference again?" (question-form trigger). Path-A fired ENGAGEMENT `summon` on "Jarvis" wake word. Qwen summarizer updated the living summary. All verbatim in `docs/audio/live-smoke.md` (T-204 addendum).
+- **Notes:** **DONE — Phase 2 COMPLETE.** NOT qa-tuning-gated (wires existing approved backends behind frozen seams; no threshold/logic changes). One shared `QwenModel` instance feeds both `QwenSummarizerBackend` and `QwenWallBackend` — no double-load. Default stays heuristic mock (model-free); Qwen backends activated via `--local-brain` on the `--live` path. The `interjection_confidence_floor` was NOT changed (qa carry-forward; T-503 lever). **Phase 3 picks up:** T-302 (continuous real-time SummonController re-evaluation on live audio — the Path-B re-check that `run_live` stubs with a trailing re-ingest).
 
 ### Phase 3 — Knowing when to speak
 - (planned T-301) Wire TurnTakingGate to real Silero VAD timing events. [core-engineer + sensing-engineer]
