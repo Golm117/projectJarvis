@@ -356,7 +356,28 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the phase is complete once T-105 lands.)_
 
 ### Phase 2 — Local understanding
-- (planned T-201) Qwen2.5/MLX runtime spike — pick model size (e.g. 1.5B vs 3B) by latency + quality. [local-ml-engineer]
+
+### T-201 — Qwen2.5/MLX runtime spike + joint ASR coexistence budget
+- **Status:** claimed
+- **Priority:** P0
+- **Role:** local-ml-engineer
+- **Owner:** local-ml-engineer
+- **Phase:** 2
+- **Created:** 2026-06-15T00:00:00Z
+- **Claimed:** 2026-06-15T12:00:00Z
+- **Completed:**
+- **Depends on:** T-101
+- **Description:** Empirically select the Qwen2.5/MLX model size (candidates: 1.5B vs 3B, 4-bit quantized, MLX-community builds) for the always-on summarize/detect_wall backends. This spike folds in the mandatory joint M5 budget measurement that was flagged repeatedly in `docs/audio/asr-spike.md`: measure ASR (mlx-whisper base.en) + Qwen2.5 running concurrently on the same utterance, both as MLX/Metal consumers on the unified-memory GPU. Deliver a model-size recommendation and an ASR base.en-vs-small.en verdict. NOT an implementation — T-202/T-203 pick up the real backends.
+- **Acceptance:**
+  - `docs/ml/qwen-coexistence-spike.md` with: exact model repos/quant used, audio clip provenance, per-candidate quality+latency (isolated), joint budget numbers (combined latency/memory/contention/sustained), recommendation, and honesty box.
+  - `DECISIONS.md` entry for the Qwen2.5 size choice (or `blocked` with reason) and the ASR base.en/small.en verdict.
+  - `mlx-lm` added via `uv add --group slm-spike` (isolated group, not core deps yet).
+  - Benchmark harness kept out of default pytest path; suite stays 182 green; ruff clean.
+  - Real measured numbers on the real M5 — nothing fabricated.
+- **Progress:**
+  - 2026-06-15T12:00Z — claimed; expanded from Phase-2 one-liner; reading orientation docs before work.
+- **Notes:** The joint budget is the whole point — do NOT stub ASR. Use `mlx-whisper base.en` via `mlx_whisper.transcribe`. Synthesize audio with macOS `say` (same technique as asr-spike). Keep benchmark harness in `/tmp/` or `scripts/` — NOT under `tests/` (the suite must never need Qwen weights). Handoff to T-202 once size is frozen.
+
 - (planned T-202) Local summarizer backend — implement `summarize()` on Qwen2.5/MLX. [local-ml-engineer]
 - (planned T-203) Local wall-detection backend — implement `detect_wall()` with structured output. [local-ml-engineer]
 - (planned T-204) Swap mock backend → local backend behind existing interfaces; re-run core tests green. [local-ml-engineer]
