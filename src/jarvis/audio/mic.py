@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import contextlib
 import queue
+import threading
 from collections.abc import Iterator
 
 import numpy as np
@@ -108,6 +109,11 @@ class SoundDeviceMicSource:
         # deposit frames without busy-spinning. The audio data itself lives in the
         # bounded ring buffer; this only carries "a frame arrived" tokens.
         self._signal: queue.Queue[None] = queue.Queue()
+        # stop() can be reached from several threads at once (the live runner's
+        # countdown timer fires on its own thread while the main thread tears
+        # down via the context manager). This lock serialises the *claim* of the
+        # stream so exactly one caller stops/closes it.
+        self._lock = threading.Lock()
 
     # -- AudioSource interface -----------------------------------------------
 
@@ -171,14 +177,26 @@ class SoundDeviceMicSource:
         self._running = True
 
     def stop(self) -> None:
-        """Stop and close the stream. Safe to call more than once."""
+        """Stop and close the stream. Idempotent and thread-safe.
+
+        ``stop()`` can be reached from more than one thread at once — the live
+        runner's countdown timer fires on its own thread while the main thread
+        also tears down via the context manager. Each caller atomically *claims*
+        the stream under ``_lock`` and nulls the attribute, so exactly one of
+        them owns the real stop/close; any others see ``None`` and do nothing
+        (no ``NoneType`` deref, no double close). Errors raised by PortAudio
+        during teardown — e.g. a benign CoreAudio ``-50`` on a stream that is
+        already stopping — are suppressed; we are tearing down and nothing
+        downstream cares.
+        """
         self._running = False
-        if self._stream is not None:
-            try:
-                self._stream.stop()
-                self._stream.close()
-            finally:
-                self._stream = None
+        with self._lock:
+            stream = self._stream
+            self._stream = None
+        if stream is not None:
+            with contextlib.suppress(Exception):
+                stream.stop()
+                stream.close()
 
     def frames(self) -> Iterator[AudioFrame]:
         """Yield captured frames until ``stop()`` is called.

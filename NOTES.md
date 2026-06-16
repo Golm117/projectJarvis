@@ -17,7 +17,13 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-15 (T-104 + T-105 done → PHASE 1 COMPLETE)
+## Current state — 2026-06-15 (hotfix: live-run mic teardown race)
+
+**`python -m jarvis --live` shutdown crash fixed.** It raised `AttributeError: 'NoneType' object has no attribute 'close'` in `mic.py` `stop()`: the live countdown timer and the main-thread context-manager teardown both called `stop()`, both passed the `is not None` check, and one nulled `self._stream` mid-flight → the other dereferenced `None`; the double stop/close also emitted the PaMacCore `-50`. **Fix:** `stop()` now atomically *claims* the stream under a new `self._lock` (exactly one caller stops/closes it) and suppresses teardown errors. 3 regression tests (idempotent stop, suppressed teardown error, 8-thread concurrent stop). Suite **182 green**, ruff clean. The residual `PaMacCore … err='-50'` line that may still print is **C-level CoreAudio stderr from PortAudio on AUHAL teardown — not a Python error** (the run exits 0); deliberately NOT fd-suppressed (redirecting fd 2 is thread-unsafe here and would mask real audio errors). Fixed directly by the orchestrator (not delegated) — `mic.py` is sensing-engineer's lane but not a review-gated module. On `main`, not pushed.
+
+---
+
+## Prior state — 2026-06-15 (T-104 + T-105 done → PHASE 1 COMPLETE)
 
 **Phase:** phase_1 — Real ears → **COMPLETE.** Phase 2 (Local understanding) is next. **T-104 (`MicSource`) and T-105 (live-transcript smoke test) are DONE** (sensing-engineer, this session). Suite **179 green** (167 baseline + 12 MicSource tests), ruff lint+format clean. Worked on `main`, did NOT push.
 

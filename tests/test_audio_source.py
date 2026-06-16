@@ -204,3 +204,85 @@ def test_mic_open_error_classification():
     err = classify(Exception("some other portaudio failure"))
     assert isinstance(err, MicCaptureError)
     assert not isinstance(err, (MicPermissionError, NoInputDeviceError))
+
+
+# -- Real mic source: thread-safe, idempotent teardown ------------------------
+# Regression for the `--live` run: the countdown timer calls stop() on its own
+# thread while the main thread also tears down, so both passed the not-None
+# check and one nulled _stream mid-flight -> the other hit `NoneType.close()`
+# (the AttributeError), and the double stop/close produced the PaMacCore -50.
+
+
+class _FakeStream:
+    """Stand-in for a PortAudio stream that records stop/close calls."""
+
+    def __init__(self, raise_on_teardown: bool = False) -> None:
+        self.stop_calls = 0
+        self.close_calls = 0
+        self._raise = raise_on_teardown
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+        if self._raise:
+            raise RuntimeError("PortAudio err -50 on stop")
+
+    def close(self) -> None:
+        self.close_calls += 1
+        if self._raise:
+            raise RuntimeError("PortAudio err -50 on close")
+
+
+def _mic_with_fake_stream(stream: _FakeStream):
+    from jarvis.audio.mic import SoundDeviceMicSource
+
+    mic = SoundDeviceMicSource()
+    mic._stream = stream  # inject a fake so no real PortAudio stream is opened
+    mic._running = True
+    return mic
+
+
+def test_stop_is_idempotent_and_closes_once():
+    stream = _FakeStream()
+    mic = _mic_with_fake_stream(stream)
+    mic.stop()
+    mic.stop()  # second call must not touch an already-closed stream
+    assert stream.stop_calls == 1
+    assert stream.close_calls == 1
+    assert mic._stream is None
+    assert mic._running is False
+
+
+def test_stop_suppresses_teardown_errors():
+    # A PortAudio error during teardown (the benign CoreAudio -50) must not
+    # propagate — we are shutting down and nothing downstream cares.
+    mic = _mic_with_fake_stream(_FakeStream(raise_on_teardown=True))
+    mic.stop()  # must not raise
+    assert mic._stream is None
+
+
+def test_concurrent_stop_calls_close_exactly_once_without_error():
+    import threading
+
+    stream = _FakeStream()
+    mic = _mic_with_fake_stream(stream)
+
+    errors: list[Exception] = []
+    barrier = threading.Barrier(8)
+
+    def worker() -> None:
+        barrier.wait()  # maximise overlap of the concurrent stop() calls
+        try:
+            mic.stop()
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []  # no AttributeError, no double-close error
+    assert stream.stop_calls == 1  # exactly one caller owned the teardown
+    assert stream.close_calls == 1
+    assert mic._stream is None
