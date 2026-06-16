@@ -160,6 +160,17 @@ class MicSource:
             that ``MicSource`` chains onto the gate it already drives).
         speaker: the placeholder speaker label for every produced ``Utterance``
             (diarization is out of scope — :data:`DEFAULT_SPEAKER`).
+        now: optional clock for stamping ``Utterance.ts``. **Default (``None``):**
+            stamp from the **VAD timeline** — ``frames_seen × frame_samples /
+            sample_rate`` — a clock-free, deterministic position (what the unit
+            tests assert, and the module-map contract). **When the orchestrator's
+            ``RollingWindow`` is driven by a *real* clock** (the live pipeline, where
+            the window's ``now`` and the gate's ``now`` are ``time.monotonic``), pass
+            that **same** ``now`` here so ``Utterance.ts`` and the window's eviction
+            clock share one timeline — otherwise the window (whose ``now()`` reads,
+            say, ~400000 s) would evict every utterance instantly because a
+            frame-derived ``ts`` of ~9 s looks ~400000 s stale. The two timelines
+            differ only by the boot offset; injecting the shared clock removes it.
 
     ``MicSource`` wires the VAD's ``gate`` to the given ``gate`` if the VAD was not
     already given one, so the single call ``for u in mic_source.utterances(): ...``
@@ -173,10 +184,12 @@ class MicSource:
         transcriber: Transcriber | None = None,
         vad: SileroVad | None = None,
         speaker: str = DEFAULT_SPEAKER,
+        now: Callable[[], float] | None = None,
     ) -> None:
         self._source = source
         self._transcriber = transcriber if transcriber is not None else MlxWhisperTranscriber()
         self._speaker = speaker
+        self._now = now  # None → frame-derived ts; else stamp ts = now()
 
         # The VAD drives the shared gate's edges. If the caller didn't supply a
         # VAD, build one bound to the gate; if they did but it has no gate, bind it.
@@ -260,9 +273,11 @@ class MicSource:
         text = self._transcriber.transcribe(waveform, self._sample_rate).strip()
         if not text:
             return
-        # ts = the audio position of the segment's end, on the VAD timeline (frames
-        # seen so far ÷ rate). No wall clock — preserves the no-hidden-clock rule.
-        ts = self._frames_seen * self._frame_seconds
+        # ts: by default the audio position of the segment's end on the VAD
+        # timeline (frames seen ÷ rate) — clock-free and deterministic. If a `now`
+        # was injected (the live pipeline, where the window runs on the same real
+        # clock), stamp from it instead so ts shares the window's timeline.
+        ts = self._now() if self._now is not None else self._frames_seen * self._frame_seconds
         self._pending = Utterance(speaker=self._speaker, text=text, ts=ts)
 
     # -- pending-utterance plumbing ------------------------------------------

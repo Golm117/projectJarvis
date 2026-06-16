@@ -332,19 +332,22 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 - **Notes:** **DONE** (not a mandatory-review trigger — audio path; the gate/summon/wall internals are untouched, only *driven* via the frozen edge + `TranscriptSource` seams). The orchestrator + gate do NOT change for the swap — `MicSource` satisfies the frozen `TranscriptSource` Protocol (`AttentionLayer.run(mic_source)`). **→ T-105 (live-transcript smoke test) completes Phase 1.**
 
 ### T-105 — Live-transcript smoke test on the M5 (completes Phase 1)
-- **Status:** claimed
+- **Status:** done
 - **Priority:** P1
 - **Role:** sensing-engineer
 - **Owner:** sensing-engineer
 - **Phase:** 1
 - **Created:** 2026-06-15T00:00:00Z
 - **Claimed:** 2026-06-15T00:00:00Z
-- **Completed:** —
+- **Completed:** 2026-06-15T00:00:00Z
 - **Depends on:** T-104
 - **Description:** Run the **real ambient pipeline live on the M5**: `AttentionLayer` wired with `MicSource` (real mic + real Silero VAD + real mlx-whisper `base.en` + the heuristic mock summarizer/wall backends — Qwen2.5 is Phase 2). Confirm end-to-end: spoken audio → transcript → rolling window → living-summary updates, and that a wake-word ("Jarvis") summon and/or a wall interjection can fire on live speech. Generate speech without a human via the macOS `say` loopback (say → speakers → mic → pipeline). Report exactly what the pipeline transcribed and which events fired — never fabricate; if the loopback audio is too quiet/echoey to transcribe cleanly, say so and capture what actually happened. Write the smoke-test method + result into `docs/audio/working-notes.md` (or `docs/audio/live-smoke.md`). If a `--live` demo entry point is added, keep the default `uv run pytest` green and don't make CI depend on a mic.
 - **Acceptance:** A documented live run (method + verbatim transcript + which events fired, or an honest note if loopback was poor) in the audio docs; a runnable `--live` path that doesn't break the default test suite; Phase 1 marked COMPLETE in NOTES.md with what Phase 2 picks up.
 - **Progress:**
-- **Notes:** Completes Phase 1 (the ambient half runs on real audio end-to-end). Phase 2 picks up Qwen2.5/MLX behind the summarizer/wall seams + the pending ASR+SLM joint M5 budget with local-ml-engineer.
+  - 2026-06-15 — claimed; expanded from the Phase-1 one-liner.
+  - 2026-06-15 — added `src/jarvis/live.py` (`run_live`) + `python -m jarvis --live` (mic/MLX imports lazy → default `uv run pytest` never touches a mic). Ran the real pipeline live on this M5 via a macOS `say` → **BlackHole 2ch** digital loopback (`--device 5`, clean no-echo PCM): real mic → Silero VAD → mlx-whisper `base.en` → `Utterance` → orchestrator. **Both engagement paths fired live, verbatim captured:** Path-A summon ("Jarvis, add that to my calendar for 7." → ENGAGEMENT trigger `summon`) and Path-B interjection ("What was the date of the conference again?" → `WallDetector` `factual_gap @ 0.80` → after the politeness gap → ENGAGEMENT trigger `wall:factual_gap`, offer "I can find that — want me to?"), plus a living-summary update. Method + verbatim transcripts + honesty box in `docs/audio/live-smoke.md`.
+  - 2026-06-15 — **found + fixed a real T-104↔orchestrator integration bug:** `MicSource` stamped `ts` from the VAD frame timeline (~0-based) but the live `RollingWindow` evicts against `time.monotonic` (~1.2 M s) → every live utterance evicted instantly → Path B never saw the wall line. Fix: `MicSource` accepts an optional injected `now`; `run_live` passes the same real clock to gate + window + `MicSource` so `ts` and eviction share one timeline (frame-derived default unchanged → T-104 tests still assert it). New regression test. DECISIONS.md entry. Suite **179 green** (12 MicSource tests), ruff lint+format clean.
+- **Notes:** **DONE — Phase 1 COMPLETE.** The ambient half runs on real audio end-to-end; both summon + interjection verified live. Honest caveats recorded: BlackHole is a *digital* (best-case) loopback (real-room WER is T-502), and the Path-B *fire cadence* used a `run_live` trailing re-check standing in for the not-yet-built continuous real-time Path-B loop (T-302, Phase 3) — detection/confidence/gate-timing are all the real live pipeline. **Phase 2 picks up:** Qwen2.5/MLX behind the `SummarizerBackend`/`WallBackend` seams (replacing the heuristic mocks) + the pending **ASR+SLM joint M5 budget** with local-ml-engineer before model sizes freeze.
 
 ---
 

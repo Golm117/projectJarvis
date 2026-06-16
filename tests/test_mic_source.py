@@ -153,6 +153,27 @@ def test_ts_is_stamped_from_the_vad_timeline_not_a_wall_clock() -> None:
     assert utt.ts == expected_frames * seconds_per_frame
 
 
+# -- injected clock for ts (the live-pipeline consistency fix, T-105) --------
+
+
+def test_injected_now_stamps_ts_from_that_clock() -> None:
+    # When a `now` is injected (the live pipeline, where the RollingWindow runs on
+    # the same real clock), Utterance.ts comes from that clock — not the frame
+    # timeline — so producer ts and window-eviction clock share one timeline.
+    clock = SimulatedClock()
+    clock.set(1_000.0)  # a large "boot-offset" value, like time.monotonic()
+    transcriber = FakeTranscriber(["hi"])
+    source = FakeAudioSource.from_pattern([("silence", 3), ("speech", 10), ("silence", 4)])
+    mic = MicSource(
+        source=source, gate=None, transcriber=transcriber, vad=_vad(None), now=clock.now
+    )
+
+    (utt,) = list(mic.utterances())
+
+    # ts is the injected clock's value, not frames × seconds_per_frame (~0.5 s).
+    assert utt.ts == 1_000.0
+
+
 # -- the shared gate receives the matching edges -----------------------------
 
 

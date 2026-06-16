@@ -3,7 +3,9 @@
 > **Owner:** core-engineer · **Domain:** `docs/architecture/`
 > **Status:** living deliverable (T-001). Grounded in `docs/prd/02-jarvis-v0-mvp.md`
 > and the reference prototype `prototypes/attention-layer/attention_layer.py`.
-> Updated as modules land (T-002…T-008) and the seams freeze.
+> Updated as modules land (T-002…T-008) and the seams freeze. **Phase 1 sensing
+> path complete** (T-102…T-105): `MicSource` + `Transcriber` seam frozen; the live
+> mic → VAD → ASR → `Utterance` pipeline ran end-to-end on the M5 (T-105).
 
 This is the **seam contract** the other agents implement against. It defines the
 module boundaries, the interfaces that cross them, and the event flow from an
@@ -504,16 +506,24 @@ MicSource(source: AudioSource,
           gate: TurnTakingGate | None = None,    # the SAME gate SummonController reads
           transcriber: Transcriber | None = None,  # default = MlxWhisperTranscriber (lazy)
           vad: SileroVad | None = None,             # default = fresh SileroVad bound to gate
-          speaker: str = DEFAULT_SPEAKER)           # fixed placeholder; diarization out of scope (v0)
+          speaker: str = DEFAULT_SPEAKER,           # fixed placeholder; diarization out of scope (v0)
+          now: Callable[[], float] | None = None)   # None → frame-derived ts; else stamp ts = now()
 utterances() -> Iterable[Utterance]   # the TranscriptSource seam
 ```
-- **`ts` from the VAD timeline, not a wall clock.** `Utterance.ts` = `frames_seen ×
-  frame_samples / sample_rate` — the audio position of the segment's *end*, derived
-  purely from the frame stream. **No `time.monotonic()`** anywhere in the live
-  source, so the "no hidden clock" invariant holds end-to-end. (The gate keeps its
-  own injected clock for the settle/politeness gaps; both timelines advance with the
-  same audio.) An open segment at end-of-stream is flushed so a final utterance
-  isn't lost.
+- **`ts` from the VAD timeline by default; the orchestrator's clock when live.**
+  Default (`now=None`): `Utterance.ts` = `frames_seen × frame_samples /
+  sample_rate` — the audio position of the segment's *end*, derived purely from the
+  frame stream, **no `time.monotonic()`** (deterministic; what the unit tests
+  assert). **But the producer's `ts` and the consumer that ages it out must share a
+  timeline:** the live `RollingWindow` evicts against a real `time.monotonic` clock,
+  so a frame-derived ts (~9 s) would look ~1.2 M s stale and the window would evict
+  every live utterance instantly (the T-105 integration bug). So in the live
+  pipeline `run_live` injects the **same** `now` into the gate, the window, *and*
+  `MicSource`, and `MicSource` stamps `ts = now()` — one timeline. The two differ
+  only by the boot offset; the shared clock removes it. (DECISIONS.md 2026-06-15
+  "Live `Utterance.ts` must share the orchestrator's clock".) The gate still owns
+  the single injected clock for the settle/politeness gaps. An open segment at
+  end-of-stream is flushed so a final utterance isn't lost.
 - **The `Transcriber` seam** (the audio-path analogue of `SummarizerBackend` /
   `WallBackend` / `FrameClassifier`): `transcribe(waveform: np.ndarray, sample_rate:
   int) -> str`. Default `MlxWhisperTranscriber` runs mlx-whisper `base.en` (the
@@ -551,9 +561,10 @@ complete:** mic → VAD → ASR → `Utterance` runs end-to-end behind the froze
 ```
 src/jarvis/
 ├── __init__.py            # version + package docstring  (T-001, done)
-├── __main__.py            # `python -m jarvis` → runs the mock demo  (T-008, done)
+├── __main__.py            # `python -m jarvis` → mock demo; `--live` → real pipeline  (T-008, T-105)
 ├── clock.py               # ManualClock (deterministic injected clock for the demo)  (T-008, done)
 ├── demo.py                # run_demo() — scripted conversation through the real layer  (T-008, done)
+├── live.py                # run_live() — real mic+VAD+ASR pipeline; `python -m jarvis --live`  (T-105, done)
 ├── types.py               # Utterance (FROZEN, T-002); WallVerdict + WallCategory (FROZEN, T-005); Interjection/SummonDecision/EngagementHandoff (FROZEN, T-007)
 ├── core/
 │   ├── __init__.py            # core package docstring  (T-002, done)

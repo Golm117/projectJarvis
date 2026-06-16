@@ -17,7 +17,29 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-15 (T-102 + T-103 done → mic capture + Silero VAD live)
+## Current state — 2026-06-15 (T-104 + T-105 done → PHASE 1 COMPLETE)
+
+**Phase:** phase_1 — Real ears → **COMPLETE.** Phase 2 (Local understanding) is next. **T-104 (`MicSource`) and T-105 (live-transcript smoke test) are DONE** (sensing-engineer, this session). Suite **179 green** (167 baseline + 12 MicSource tests), ruff lint+format clean. Worked on `main`, did NOT push.
+
+**The ambient half now runs on real audio end-to-end.** Live on this M5: mic → Silero VAD → mlx-whisper `base.en` → `Utterance` → rolling window → living summary → wall detection → dual-summon. **Both engagement paths fired live** (verbatim in `docs/audio/live-smoke.md`).
+
+**What landed:**
+- **`src/jarvis/audio/mic_source.py` (T-104)** — **`MicSource(TranscriptSource)`**: the live fill of the frozen `TranscriptSource` seam — drops into `AttentionLayer.run()` with **zero core change**, replacing `ScriptedSource`. Consumes an `AudioSource` through `SileroVad`, brackets each speech segment off the VAD edges, concatenates its frames, transcribes once at the `speech_end` edge, yields `Utterance(speaker, text, ts)`; drives the shared `TurnTakingGate`; flushes an open segment at end-of-stream; drops empty ASR text. **`Transcriber` Protocol seam** (audio-path analogue of `SummarizerBackend`/`WallBackend`/`FrameClassifier`): default `MlxWhisperTranscriber` (mlx-whisper `base.en`, lazy import) / test `FakeTranscriber`. **`mlx-whisper` promoted from the `asr-spike` uv group into real `[project.dependencies]`** (demoted out of the spike group, which now lists only the `pywhispercpp` fallback).
+- **`src/jarvis/live.py` + `python -m jarvis --live` (T-105)** — the real pipeline on live mic audio (mic/MLX imports **lazy** so `uv run pytest` never touches a mic; default suite stays green, CI mic-free). Flags: `--seconds`, `--say "TEXT"` (macOS `say` loopback), `--device` (BlackHole digital loopback), `--stop-after`.
+- **LIVE SMOKE TEST RAN on this M5 (verbatim, not fabricated — `docs/audio/live-smoke.md`):**
+  - **Path A:** "Jarvis, add that to my calendar for 7." → **ENGAGEMENT (trigger: `summon`)**.
+  - **Path B:** "What was the date of the conference again?" → `WallDetector` **`factual_gap @ 0.80`** → after the politeness gap → **ENGAGEMENT (trigger: `wall:factual_gap`)**, offer "I can find that — want me to?" + a living-summary update.
+- **Found + fixed a real T-104↔orchestrator integration bug** (DECISIONS.md): `MicSource` stamped `ts` from the VAD frame timeline (~0-based) but the live `RollingWindow` evicts against `time.monotonic` (~1.2 M s since boot) → **every live utterance evicted instantly** → Path B never saw the wall line. Fix: `MicSource` accepts an optional injected `now`; `run_live` passes the **same** real clock to gate + window + `MicSource` so `ts` and eviction share one timeline. The frame-derived default is unchanged (T-104 unit tests still assert it) — only the live case injects the real clock. New regression test.
+
+**Honest caveats:** BlackHole is a *digital* (best-case) loopback — real-room WER is still Phase 5 (T-502). The Path-B *fire cadence* used a `run_live` trailing re-check standing in for the not-yet-built **continuous real-time Path-B loop (T-302, Phase 3)** — detection/confidence/gate-timing are all the real live pipeline; only the re-poll cadence is a smoke-test affordance (the v0 orchestrator only evaluates Path B at utterance-ingest, before the ~2 s gap opens).
+
+**⚠️ Still pending with local-ml-engineer:** the **ASR + Qwen2.5 concurrent always-on M5 joint budget** (combined latency / memory / GPU contention / sustained thermal) must be measured *before either side freezes model sizes* — see `asr-spike.md` §coexistence. `base.en` was chosen to protect SLM headroom.
+
+**→ Phase 2 (Local understanding) picks up** (local-ml-engineer): T-201 Qwen2.5/MLX size spike, then T-202/T-203 the real `summarize()` / `detect_wall()` backends behind the **frozen `SummarizerBackend` / `WallBackend` seams** (replacing the heuristic mocks), then T-204 swap mock→local and re-run core tests green. The orchestrator + the frozen seams don't change for the swap. Also note for Phase 3 (T-302): the live Path-B needs the continuous real-time SummonController re-evaluation the smoke test stubbed.
+
+---
+
+## Prior state — 2026-06-15 (T-102 + T-103 done → mic capture + Silero VAD live)
 
 **Phase:** phase_1 — Real ears (in progress). **T-102 (always-on mic capture loop + `AudioSource`) and T-103 (Silero VAD) are DONE** (sensing-engineer, this session). Suite **167 green** (135 baseline + 18 audio-source + 14 VAD), ruff clean. Worked on `main`, did NOT push.
 
