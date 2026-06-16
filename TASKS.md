@@ -260,16 +260,33 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
   - 2026-06-16 — full spec written into `eval-plan.md` (fixture format, precision computation, run model, T-503 hook, 5 illustrative fixtures). Doc-only; suite stays 121 green, ruff clean.
 - **Notes:** **DONE — interjection-precision eval spec landed.** Fixture = a monotonic timeline (utterance / speech_start / speech_end) + per-candidate ground-truth (wall, WallCategory, useful|false, match-window) + a `config` block of the 3 thresholds T-503 sweeps. **precision = useful ÷ total Path-B fires**; Path-A summons and `None` decisions excluded; a fire matches a candidate by time window and must be the right category to score "useful". Runs deterministically on the `SimulatedClock` + `FakeWallBackend` (and `ScriptedSource`/fakes once T-008 lands). The yardstick the MVP is judged against. **Phase 0 now has one task left: T-008.**
 
+### T-101 — ASR runtime spike: mlx-whisper vs whisper.cpp on the M5
+- **Status:** claimed
+- **Priority:** P1
+- **Role:** sensing-engineer (+ local-ml-engineer for the joint M5-budget read)
+- **Owner:** sensing-engineer
+- **Phase:** 1
+- **Created:** 2026-06-15T00:00:00Z
+- **Claimed:** 2026-06-15T00:00:00Z
+- **Completed:** —
+- **Depends on:** —
+- **Description:** Empirically pick the local ASR runtime for the always-on ambient path. Benchmark the two approved candidates — **mlx-whisper** (Apple-Silicon/MLX native) and **whisper.cpp** (via the `pywhispercpp` binding / Core ML) — on THIS machine (Apple M5 Pro, 18 cores, 64 GB) at a comparable small/base model size. Measure (1) transcription latency — wall-clock per representative clip and, if feasible, a chunked/streaming figure — related to the wedge's ~2 s offer-to-help budget; (2) accuracy — WER (or a qualitative transcript comparison) against a known reference clip; (3) CPU/memory and, as far as observable in one session, sustained-load/thermal behavior (a cold one-shot lies — note any throttling over a short repeated run). The runtime feeds `MicSource` (T-104) behind the frozen `TranscriptSource` seam and must leave M5 headroom for Qwen2.5 (Phase 2) under always-on load.
+- **Acceptance:** `docs/audio/asr-spike.md` contains the methodology, the audio sample used (stated exactly, with provenance), a measured comparison table (latency / accuracy / CPU-mem / sustained behavior), and a clear recommendation (runtime + model size + why). A `DECISIONS.md` entry records the choice (or "deferred — blocked"), evidence, and alternatives. Any new dep recorded per the dependency policy. If both runtimes are genuinely un-runnable (no network / install blocked), the task is `blocked` with a clear note — no fabricated numbers.
+- **Progress:**
+  - 2026-06-15 — claimed; expanded from the Phase-1 one-liner placeholder.
+- **Notes:** Claimed. Spike in progress — see `docs/audio/asr-spike.md` (living deliverable).
+
 ---
 
 ## Planned tasks (Phase 1+ — one-liners, expanded to full entries when the phase becomes active)
 
 ### Phase 1 — Real ears
-- (planned T-101) ASR/runtime spike — benchmark mlx-whisper vs whisper.cpp on the M5 (latency, accuracy, CPU/thermal); pick one. [sensing-engineer + local-ml-engineer]
 - (planned T-102) Always-on mic capture loop — ring-buffered, low-latency. [sensing-engineer]
 - (planned T-103) Silero VAD gating — speech/silence segmentation feeding the gate and ASR. [sensing-engineer]
 - (planned T-104) MicSource adapter — wire VAD + ASR into `Utterance` events behind `TranscriptSource`. [sensing-engineer]
 - (planned T-105) Live-transcript smoke test on the M5 — speak, see the transcript. [sensing-engineer]
+
+_(T-101 expanded to a full entry below — it is the active Phase 1 spike.)_
 
 ### Phase 2 — Local understanding
 - (planned T-201) Qwen2.5/MLX runtime spike — pick model size (e.g. 1.5B vs 3B) by latency + quality. [local-ml-engineer]
