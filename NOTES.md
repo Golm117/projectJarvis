@@ -17,7 +17,31 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-16 (T-507 done → anti-fragmentation endpointing)
+## Current state — 2026-06-16 (T-508 in review → graded interjection-detection rework)
+
+**Phase:** phase_5 field-fix. T-508 (interjection-detection overhaul) is **in review** (local-ml-engineer). Suite **523 green** (was 463+17 failing), ruff clean. On `main`, NOT pushed. **qa-tuning gate required** before marking done.
+
+**T-508 — what was built:**
+- `src/jarvis/ml/wall.py`: graded 1–5 rating replaces near-binary confidence. `rating_to_confidence()` table (1→0.05, 2→0.30, 3→0.65, 4→0.80, 5→0.95). `is_wall` from `rating>=3`. Information-Gap CoT reasoning step. Six failure-case exemplars. `max_tokens` raised 120→200.
+- `src/jarvis/attention_layer.py`: `_has_wall_signal` pre-filter widened to catch wh-form gaps ("I wonder…", not-sure-wh, no-clue, can't-recall) that don't end in `?`. This was the root cause of the √81 miss.
+- `tests/test_qwen_wall_backend.py`: 17 failing tests updated to T-508 graded contract; 40+ new tests for `rating_to_confidence`, `is_wall` boundary, failure cases via stubbed canned JSON, widened pre-filter, robust parse.
+
+**Live results (M5, single run, non-deterministic):**
+- `sqrt81_question`: rated 3 → confidence 0.65 (below 0.70 floor; partial improvement vs. complete miss)
+- `sqrt81_wh_form`: rated 2 → non-wall (pre-filter now passes it to model; model rated low this run)
+- `4_times_7`: PASS, confidence 0.95
+- `what_do_you_need` (post-summon): PASS, non-wall
+- `plain_statement`: PASS, non-wall
+
+**What qa-tuning gates:**
+- Re-run precision eval with graded confidence signal (old floor 0.70 was inert; it's now a real gate).
+- Decide the final `interjection_confidence_floor` value (keep 0.70? raise? lower to admit rating-3 borderlines?).
+- Verify `ff-false-wrong-category` FP still scores false under the new grading.
+- Decide if √81 cases need prompt escalation (7B) or more exemplars.
+
+---
+
+## Prior state — 2026-06-16 (T-507 done → anti-fragmentation endpointing)
 
 **Phase:** phase_5 field-fix. T-507 (anti-fragmentation endpointing + question fidelity) is **DONE** (sensing-engineer). Suite **480 green** (466 + 14 new), ruff clean. On `main`, NOT pushed.
 

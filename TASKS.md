@@ -887,7 +887,7 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 - **Notes:** DONE. NOT qa-gated (VAD endpointing / sensing path only; TurnTakingGate/SummonController/WallDetector byte-for-byte unchanged). **Hangover raised:** 6 frames (192 ms) → 15 frames (480 ms). This absorbs a natural breath-length mid-sentence pause (~200–400 ms) without splitting the utterance. **Tradeoff documented in vad.py:** +288 ms turn-end detection delay (modest; politeness gap is 2 s; summon fires on the full utterance). A genuine ~1 s thinking pause IS a real turn boundary and will still split — merging those would cost too much latency; not chased (documented in tests). **ASR punctuation investigation:** `mlx_whisper.transcribe` exposes `initial_prompt` and `decode_options`. Tested the API — works. Decision: leave decoding default. The structural fix (T-506 onset + T-507 anti-fragmentation) gives Whisper the full prosodic arc; `?` emission follows naturally from whole-utterance capture. Detailed rationale in `MlxWhisperTranscriber` docstring. **Live re-test honesty:** `--say` loopback produced 0 utterances (TTS → speaker → mic latency too short for the run window; loopback already noted as unreliable for T-506 too). Unit tests are the deterministic proof; user should verify with natural voice. **Files changed:** `src/jarvis/audio/vad.py`, `src/jarvis/audio/mic_source.py`, `tests/test_t507_antifrag_endpointing.py`.
 
 ### T-508 — Interjection-detection overhaul: graded score + Information-Gap CoT + pre-filter widening
-- **Status:** claimed
+- **Status:** review
 - **Priority:** P1
 - **Role:** local-ml-engineer
 - **Owner:** local-ml-engineer
@@ -907,4 +907,28 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
   - Status set to `review` (NOT done); qa-brief written in Notes.
 - **Progress:**
   - 2026-06-16T22:00:00Z — claimed; all referenced files read; baseline 480 green confirmed.
-- **Notes:** **qa-GATED. Route to qa-tuning before marking done.** qa-brief (to be written when review is set): see commit message + this notes field for the graded design, rating→confidence mapping, exemplars, pre-filter change + cost note, live results, and the explicit ask that qa-tuning re-tune/validate `interjection_confidence_floor` on the eval now that confidence is genuinely graded (it was inert before at near-binary ~0.95; a different floor value may now be appropriate).
+  - 2026-06-16T22:30:00Z — implementation validated (no bugs); 17 failing tests updated to T-508 graded contract; 40+ new tests added; 523 passed (from 463+17 failing), ruff clean. Commits: dcf5ad9 (impl+tests), plus bookkeeping commit.
+- **Notes:** **qa-GATED. Route to qa-tuning before marking done.**
+
+  **qa-tuning review brief:**
+
+  **Graded-score design.** The model now emits a 1–5 interjection-worthiness rating (Inner-Thoughts style from the research doc) instead of near-binary ~0.95 confidence. The rating maps via `rating_to_confidence()` (1→0.05, 2→0.30, 3→0.65, 4→0.80, 5→0.95) into `WallVerdict.confidence`. `is_wall` is derived from `rating >= 3`. The `WallVerdict` shape is unchanged (frozen).
+
+  **Why this matters for the floor.** The previous prompt produced near-binary confidence (~0.90–0.95 for any fire). The 0.70 `interjection_confidence_floor` in `SummonController` was therefore inert — it could never separate a genuine fire (0.95) from a borderline one (also 0.95). With graded confidence, the floor now does real work: rating 3 → 0.65 (below floor, borderline suppressed), rating 4 → 0.80 (fires), rating 5 → 0.95 (fires confidently). **qa-tuning must re-run the eval on the current fixtures and re-tune `interjection_confidence_floor`** — the value 0.70 was calibrated when confidence was near-binary; a different value may be appropriate now (e.g., 0.75 to require rating 4+ to fire, or 0.60 to let rating 3 fires through).
+
+  **Information-Gap CoT.** A structured reasoning step precedes the rating — the model briefly answers: (1) is there an unanswered Q/expressed uncertainty? (2) is it factual/answerable? (3) is it group-directed (not Jarvis/self/rhetorical)? (4) would a brief offer help? The `reasoning` field is parsed but discarded (not in `WallVerdict`). Short CoT at Qwen2.5-3B scale improves JSON-schema compliance with no significant latency cost (max_tokens raised 120→200, ~80 ms extra, well within T-505 measured budget).
+
+  **Six few-shot exemplars** in the user message anchor the failure/edge cases: √81 direct question (rating 5), √81 wh-form (rating 4), 4×7 (rating 5, keep firing), post-summon WDYN (rating 1, FP fix), self-musing volume (rating 1, FP fix), declarative gap / date (rating 3, borderline).
+
+  **Pre-filter widening.** `_has_wall_signal` now also admits: "I wonder…", wh-form uncertainty phrasings ("not sure what/who/how/when/where/why", "no clue", "unclear"), and "can't recall/remember". Root cause of the √81 miss: `"I wonder what the square root of 81 is."` has no `?` and matched no prior pattern — the model never ran. Cost tradeoff documented in `attention_layer.py`: the wider filter risks a "I wonder if I locked the door" musing triggering the model, but the model is precision-first and has an explicit exemplar for self-musing → rating 1. The residual detector-level FP risk is handled by the model, not the pre-filter.
+
+  **Live results (single M5 run, non-deterministic):**
+  - `sqrt81_question` ("What's the square root of 81?"): `is_wall=True, category=factual_gap, confidence=0.65` — rated 3 (borderline; reaches the model now vs. complete miss before; SummonController suppresses at 0.65 < 0.70 floor). Partial improvement.
+  - `sqrt81_wh_form` ("I wonder what the square root of 81 is."): `is_wall=False, category=none, confidence=0.30` — rated 2 on this run (pre-filter now passes it to the model; model rated it low this run).
+  - `4_times_7`: PASS, confidence 0.95 (rating 5) — the consistently firing case still fires.
+  - `what_do_you_need` (post-summon): PASS, non-wall, confidence 0.05 — exemplar worked.
+  - `plain_statement`: PASS, non-wall.
+
+  **The √81 cases are non-deterministic.** The pre-filter miss is definitively fixed (wh-form now reaches the model). Whether Qwen2.5-3B consistently rates it 4–5 vs. 3 is a model-quality question that requires the eval corpus + possibly prompt tuning or 7B escalation. qa-tuning should re-run the precision eval against the new fixtures with the graded confidence signal and decide: (a) is the new floor 0.70 still right, or should it shift? (b) are the existing fixtures still correct ground truth for the new behavior? (c) does the old `ff-false-wrong-category` FP still score false under the new grading?
+
+  **Explicit floor-retune ask: qa-tuning must re-tune/validate `interjection_confidence_floor` on the eval now that confidence is graded.** Rating 3 = 0.65 sits just below 0.70 — qa-tuning decides the final bar, whether that's raising, lowering, or keeping 0.70.
