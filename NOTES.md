@@ -17,7 +17,31 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-15 (T-204 DONE → PHASE 2 COMPLETE)
+## Current state — 2026-06-15 (T-301 DONE → Phase 3 integration seam documented)
+
+**Phase:** phase_3 — Knowing when to speak (ACTIVE). T-301 (verify VAD↔gate one-clock invariant) is **DONE** (core-engineer, this session). Suite **270 green** (264 baseline + 6 new), ruff clean. On `main`, not pushed.
+
+**T-301 — findings (all three items confirmed):**
+
+1. **One-clock invariant: HOLDS.** In `run_live`, the same `time.monotonic` function-object flows into:
+   - `TurnTakingGate(now)` → gate stamps every edge from it
+   - `AttentionLayer.build(now=now)` → `RollingWindow` evicts against it
+   - `MicSource(now=now)` → `Utterance.ts = now()` at segment-close
+   No module calls `time.monotonic()` on its own. This was broken in T-104 (frame-derived ts vs. large-offset window clock → instant eviction of every live utterance) and fixed in T-105 by injecting the shared clock into `MicSource`. 6 pinning tests in `tests/test_one_clock_invariant.py` lock this in.
+
+2. **Blocking-generator silence gap: CONFIRMED as the T-302 integration point.** The `MicSource.utterances()` generator is blocked inside `source.frames()` during silence — no yield, so `AttentionLayer.ingest` never runs, so `SummonController.consider_interjection` (which reads `gate.politeness_gap_elapsed()`) is never called as the gap grows. The window during which `politeness_gap_elapsed()` is `True` is entirely missed. The v0 smoke-test trailing re-check (`time.sleep + re-ingest`) is a one-shot affordance, not the continuous loop T-302 must build.
+
+3. **T-302 integration seam — recommended design.** Add `AttentionLayer.tick()` that re-evaluates `consider_interjection` with a **cached** `_pending_wall` verdict (from the most recent `ingest` call that returned None). Threading: a timer in `live.py` calls `layer.tick()` periodically during silence. No changes to `TurnTakingGate`, `SummonController`, or `WallDetector` — all qa-gated modules are untouched. Full design in `docs/architecture/phase3-invariants.md` §3.
+
+4. **Non-deterministic back-off — T-302 must use cached verdict.** `SummonController._signature()` keys on `category::offer`. The `QwenWallBackend` offers are non-deterministic (same wall, different phrasing each model call) → signature never matches → back-off never fires → duplicate offers spam. Fix: `tick()` re-evaluates the *same* cached `WallVerdict` from ingest time, not a fresh model call. No qa-gated change needed.
+
+5. **No defects in qa-gated modules.** Nothing to flag to the orchestrator.
+
+**→ T-302 picks up:** implement `AttentionLayer.tick()` + the background timer in `live.py` using the design in `docs/architecture/phase3-invariants.md` §3. T-302 is NOT qa-gated if it only adds `tick()` to the orchestrator and a timer in `live.py` without changing gate/summon/wall logic.
+
+---
+
+## Prior state — 2026-06-15 (T-204 DONE → PHASE 2 COMPLETE)
 
 **Phase:** phase_2 — Local understanding → **COMPLETE.** All four Phase-2 tasks done: T-201 (spike), T-202 (summarizer backend), T-203 (wall-detection backend, qa-tuning approved), T-204 (backend swap + live verification). Suite **264 green**, ruff clean. On `main`, not pushed.
 

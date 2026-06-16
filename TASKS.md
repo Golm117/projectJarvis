@@ -487,14 +487,14 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 ### Phase 3 — Knowing when to speak
 
 ### T-301 — Verify VAD↔gate one-clock invariant and document Phase-3 integration seam
-- **Status:** claimed
+- **Status:** done
 - **Priority:** P0
 - **Role:** core-engineer
 - **Owner:** core-engineer
 - **Phase:** 3
 - **Created:** 2026-06-15T00:00:00Z
 - **Claimed:** 2026-06-15T22:00:00Z
-- **Completed:**
+- **Completed:** 2026-06-15T23:00:00Z
 - **Depends on:** T-103, T-104, T-105 (all done)
 - **Description:** VERIFY-ONLY (no logic changes). Trace and confirm three things:
   (1) **One-clock invariant**: in `run_live`, the `TurnTakingGate`, the `RollingWindow`, and `MicSource.Utterance.ts` all derive from the same injected `now` (`time.monotonic`). The gate stamps VAD edges from `now()`; the window evicts against `now()`; `MicSource` stamps `ts = now()` (not frame-derived) because `run_live` injects the shared clock. Trace and state whether this holds without exception.
@@ -511,7 +511,8 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
   - NOT qa-gated (no change to TurnTakingGate / SummonController / WallDetector behavior).
 - **Progress:**
   - 2026-06-15T22:00Z — claimed; orientation complete, beginning trace.
-- **Notes:** VERIFY-ONLY — any defect in a qa-gated module is reported to the orchestrator, not silently fixed here.
+  - 2026-06-15T23:00Z — trace complete; 6 pinning tests written + green (270 total); `docs/architecture/phase3-invariants.md` written.
+- **Notes:** DONE (not qa-gated — verify-only + adds tests, no logic change). **One-clock invariant HOLDS.** Silence-gap confirmed as T-302 integration point. Recommended T-302 hook: `AttentionLayer.tick()` calling cached `consider_interjection` during silence; threading isolated to `live.py`. Non-deterministic back-off finding noted: use cached verdict from ingest (not a fresh model call) so offer text is stable across ticks. No defects in qa-gated modules. **T-302 picks up** with the `tick()` design from `docs/architecture/phase3-invariants.md` §3.
 
 - (planned T-302) Real-time SummonController — continuous Path-B re-evaluation during silence. [core-engineer]
 - (planned T-303) Validate abort-on-resume and back-off on live audio. [core-engineer + qa-tuning]
