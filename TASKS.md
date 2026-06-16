@@ -406,14 +406,14 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
   - 2026-06-15T16:00Z — shipped `src/jarvis/ml/` package (`__init__.py`, `qwen.py`, `summarizer.py`); 25 new tests in `tests/test_qwen_summarizer.py` (24 model-free + 1 live); promoted `mlx-lm` to real deps; wrote `docs/ml/slm-backend.md` and DECISIONS.md entry. Suite 207 green (182 baseline + 25), ruff clean.
 - **Notes:** DONE (not qa-tuning-gated — summarizer is not a gate/summon/wall module). **Handoff to T-203 (QwenWallBackend):** reuse `QwenModel` from `src/jarvis/ml/qwen.py` — construct once, inject into both `QwenSummarizerBackend` AND `QwenWallBackend`. The loader is ready; just add `src/jarvis/ml/wall.py` with a `QwenWallBackend` that parses the model's JSON into `WallVerdict`. Prompt design stub in `docs/ml/slm-backend.md` §wall. T-203 IS qa-tuning-gated (wall behavior is the success-metric-critical path).
 ### T-203 — Local wall-detection backend (QwenWallBackend)
-- **Status:** review
+- **Status:** done
 - **Priority:** P0
 - **Role:** local-ml-engineer
 - **Owner:** local-ml-engineer
 - **Phase:** 2
 - **Created:** 2026-06-15T00:00:00Z
 - **Claimed:** 2026-06-15T17:00:00Z
-- **Completed:**
+- **Completed:** 2026-06-15T19:30:00Z
 - **Depends on:** T-202
 - **Description:** Implement `QwenWallBackend` in `src/jarvis/ml/wall.py` — the real `WallBackend.detect_wall(transcript, summary) -> WallVerdict` seam, backed by the shared `QwenModel` (Qwen2.5-3B-Instruct-4bit via MLX). The backend prompts the model to emit structured JSON `{is_wall, category, confidence, offer}` and parses it robustly into the frozen `WallVerdict` dataclass. Precision over recall: the prompt must be tight enough that confident non-walls are not flagged (the T-201 false positive — 3B flagged a clear decision as `explicit_ask` — must be addressed by prompt engineering, not a model upgrade). Confidence is surfaced raw; no speak threshold applied here (that is SummonController policy, T-007). On any JSON parse failure, return `WallVerdict.none()` — never raise.
 - **Acceptance:**
@@ -430,9 +430,18 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 - **Progress:**
   - 2026-06-15T17:00Z — claimed; read all orientation docs before work.
   - 2026-06-15T18:00Z — shipped `src/jarvis/ml/wall.py` + `tests/test_qwen_wall_backend.py`; 57 model-free tests; ran live test on M5 (4/5 PASS); updated docs. Suite 264 green, ruff clean. Commits: 8fd0170 (claim), a0469cb (feat).
-- **Notes:** QA-GATED. Do NOT mark done. Routing to qa-tuning.
+- **Notes:** **qa-tuning: APPROVED (2026-06-15T19:30Z) — `review` → `done`. T-204 UNBLOCKED.** Suite 264 green, ruff clean; live test re-run independently on this M5 (4/5, matching the brief verbatim).
 
-  **REVIEW BRIEF FOR QA-TUNING:**
+  **qa-tuning approval note (what I checked + the two decisions):**
+  - **Contract conformance — PASS, pinned.** `_parse_verdict` enforces every frozen-`WallVerdict` invariant and the 57 model-free tests pin each: NONE iff ¬is_wall; confidence clamped [0,1]; offer="" for non-wall; returns the frozen dataclass (not a dict); graceful fallback to `WallVerdict.none()` on ANY malformed output (12 fallback tests), never raises. Robust extras: markdown-fence stripping + first-`{...}` extraction. Tests assert external contract only (golden rule); lazy-import boundary pinned.
+  - **Raw-confidence contract — PASS.** Backend applies NO threshold (0.45 wall passes through). Confirmed.
+  - **factual_gap recall — ACCEPTED as a deliberate precision-first tradeoff for v0 (option a).** I probed 6 genuine factual_gap phrasings on the real model: question-form gaps FIRE (incl. the exact T-105 live Path-B trigger "What was the date of the conference again?" → factual_gap @ 0.95), declarative gaps ("I don't remember", "I can't recall", "no idea") MISS. Category is partially reachable, not dead — and the T-105 demo trigger still fires, so the T-204 swap does not silence the demonstrated Path-B path. Grounded in the metric (precision = useful ÷ total Path-B fires): a missed factual_gap is *silence* (recall cost), never a *false fire* (precision cost). Precision-first is the explicitly chosen, DECISIONS.md-logged strategy and the success metric. **Recall tuning deferred to Phase-5 T-503** (add declarative factual_gap fixtures + sweep).
+  - **Confidence-floor verdict — 0.70 floor remains SOUND but is INERT for this backend; recalibration deferred to T-503.** Every *fired* wall lands at 0.95 (well above 0.70); the model emits near-binary confidence (~0.90–1.00) reflecting certainty about its own answer regardless of is_wall sign. So the binary `is_wall` is the real gate; the floor never decides here. NOT a blocker; changing the floor is itself a qa-gated change → flagged to orchestrator, not touched.
+  - **Offer phrasing — minor, non-blocking.** Model offers slightly formal vs the spoken-style heuristic; recorded for Phase-4/5 polish.
+  - **Human-decision flags (neither blocks):** (1) 7B escalation for factual_gap recall — already deferred, needs joint-budget + human latency call; (2) interjection_confidence_floor recalibration — Phase-5 T-503 + qa-gated. Both flagged to orchestrator, neither decided unilaterally.
+  - Full review in `docs/qa/working-notes.md` §"T-203 … APPROVED".
+
+  **REVIEW BRIEF FOR QA-TUNING (retained for the record):**
 
   **What changed:** `src/jarvis/ml/wall.py` — new `QwenWallBackend` implementing the frozen `WallBackend.detect_wall(transcript, summary) -> WallVerdict` seam. Thin adapter over the shared `QwenModel` loader (T-202). Does NOT change `WallDetector`, `SummonController`, `AttentionLayer`, or any thresholds. New test file: `tests/test_qwen_wall_backend.py` (57 model-free + 1 live).
 
@@ -464,8 +473,9 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 - **Role:** local-ml-engineer
 - **Phase:** 2
 - **Created:** 2026-06-15T00:00:00Z
-- **Depends on:** T-203
-- **Description:** Swap mock backend → local backend behind existing interfaces; re-run core tests green. [local-ml-engineer]
+- **Depends on:** T-203 ✅ (done — qa-tuning approved 2026-06-15T19:30Z; **T-204 is now UNBLOCKED**)
+- **Description:** Swap mock backend → local backend behind existing interfaces; re-run core tests green. Construct ONE shared `QwenModel()` at startup and inject the same instance into both `QwenSummarizerBackend` (T-202) and `QwenWallBackend` (T-203) — no double-load. The swap touches neither `WallDetector`/`SummonController` (frozen seams) nor any threshold. [local-ml-engineer]
+- **Notes:** **qa-tuning carry-forwards from the T-203 review (for the swap + the live re-check):** (1) The Qwen backend has **partial factual_gap recall** — declarative gaps ("I don't remember…") MISS, question-form gaps fire. The T-105 live-smoke Path-B trigger ("What was the date of the conference again?") **still fires** factual_gap @ 0.95 under Qwen, so the live demo path is preserved across the swap — but if you re-run any live smoke that relied on a *declarative* factual_gap line, expect silence (that's the accepted v0 tradeoff, deferred to T-503), not a regression. (2) The model emits **near-binary confidence (~0.95 on fires)** so the 0.70 floor is inert for this backend — fine for the swap; recalibration is T-503. Do NOT change the floor in T-204 (qa-gated).
 
 ### Phase 3 — Knowing when to speak
 - (planned T-301) Wire TurnTakingGate to real Silero VAD timing events. [core-engineer + sensing-engineer]

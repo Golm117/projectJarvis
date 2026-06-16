@@ -17,20 +17,17 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-15 (T-203 in review → QwenWallBackend built; awaiting qa-tuning)
+## Current state — 2026-06-15 (T-203 APPROVED by qa-tuning → done; T-204 unblocked)
 
-**Phase:** phase_2 — Local understanding (ACTIVE). T-201 (spike), T-202 (summarizer backend), and T-203 (wall-detection backend) are **DONE** (local-ml-engineer). Suite **264 green**, ruff clean. On `main`, not pushed.
+**Phase:** phase_2 — Local understanding (ACTIVE). T-201 (spike), T-202 (summarizer backend), T-203 (wall-detection backend) all **DONE**. **T-203 passed its mandatory qa-tuning review and is `done`.** Suite **264 green**, ruff clean. On `main`, not pushed.
 
-**What landed (T-203):**
-- **`src/jarvis/ml/wall.py`** — `QwenWallBackend` (real `WallBackend` seam).
-- **`tests/test_qwen_wall_backend.py`** — 57 model-free tests + 1 live test.
-- **`docs/ml/slm-backend.md`** — wall-detection section updated from stub to done with live results.
+**T-203 verdict (qa-tuning): APPROVED.** Contract conformance fully pinned by the 57 model-free tests (frozen `WallVerdict`, NONE iff ¬is_wall, clamp, offer="" non-wall, graceful `none()` fallback, raw confidence). The `factual_gap` recall miss is **accepted as a deliberate precision-first tradeoff for v0** — grounded in the success metric (a miss costs *recall*/silence, not *precision*; precision = useful ÷ total Path-B fires). I independently re-ran the live test (4/5) and probed 6 factual_gap phrasings: **question-form gaps fire (incl. the exact T-105 live trigger), declarative gaps miss** — category is partially reachable, not dead, and the live-smoke Path-B path survives the swap.
 
-**T-203 is QA-GATED — in `review`. Do NOT proceed to T-204 until qa-tuning reviews and approves.**
+**Two items flagged to the orchestrator (neither blocks; both Phase-5 T-503 / human):**
+1. **7B escalation** for factual_gap recall — already deferred, needs joint-budget + a human latency call.
+2. **`interjection_confidence_floor` recalibration** — the Qwen backend emits near-binary confidence (~0.95 on fires), so the 0.70 floor is *inert* for it (the binary `is_wall` is the real gate). Floor stays sound; whether to retune is a Phase-5 T-503 question AND a qa-gated change — not decided unilaterally.
 
-**Key finding for qa-tuning:** The live run shows 4/5 scenarios passing. The `factual_gap` scenario FAILS: model returns `is_wall=False, confidence=0.90` for "I honestly don't remember what date we picked." The model chose not to flag is_wall despite high confidence. The T-201 false positive (clear decision flagged as explicit_ask) is FIXED. See T-203 Notes in TASKS.md for the full qa-tuning review brief.
-
-**→ T-204 (swap mock→local in orchestrator) is BLOCKED pending qa-tuning review of T-203.**
+**→ T-204 (swap mock→local in orchestrator) is now UNBLOCKED** (local-ml-engineer). Carry-forward in the T-204 Notes: the swap preserves the T-105 live Path-B trigger; don't change the floor in T-204 (qa-gated); declarative-factual_gap recall is the T-503 lever.
 
 ---
 

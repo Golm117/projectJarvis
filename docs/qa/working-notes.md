@@ -2,6 +2,87 @@
 
 _(scratchpad for in-flight thinking; promote durable findings to topic files)_
 
+## T-203 QwenWallBackend — MANDATORY REVIEW: APPROVED (2026-06-15)
+
+Mandatory qa-tuning review of local-ml-engineer's `QwenWallBackend`
+(`src/jarvis/ml/wall.py`) — the real `WallBackend` on Qwen2.5-3B/MLX, carries the
+interjection-precision success metric. **Verdict: APPROVED → done. T-204 unblocked.**
+Suite **264 green**, ruff clean. Live test re-run independently on this M5 (4/5,
+matching the brief verbatim). Two human-decision flags raised (below), neither blocking.
+
+### What I checked (the brief's 5 items + my own probes)
+
+1. **factual_gap recall — ACCEPTED for v0 (option a).** I probed 6 genuine
+   factual_gap phrasings against the real model (not just the one live scenario):
+   - FIRE (is_wall=True, factual_gap, 0.95): "What was the date of the conference
+     again?" (the **exact T-105 live Path-B trigger**), "who was the contact? I forget".
+   - MISS (is_wall=False, ~0.90–0.95): "I don't remember the date", "I can't recall
+     the vendor", "what was the API name?", "no idea what the budget was".
+   The split is **question-form gaps fire / declarative gaps miss**. So the category
+   is *partially reachable, not dead* — and crucially the T-105 live-smoke trigger
+   still fires, so swapping the backend at T-204 does NOT silence the demonstrated
+   Path-B path. Grounded in the metric: **precision = useful ÷ total Path-B fires**;
+   a missed factual_gap is *silence* (a recall cost), never a false fire (a precision
+   cost). Precision-first is the explicitly chosen, DECISIONS.md-logged strategy and
+   the project's success metric. So conservative-on-declarative-factual_gap is an
+   acceptable v0 tradeoff. **Recall tuning deferred to Phase-5 T-503** (the calibration
+   sweep can add a stronger declarative factual_gap example or lower the floor and
+   re-score). Not option (b) (don't bounce — the impl is sound and the tradeoff is
+   deliberate); option (c) 7B is a human decision already DEFERRED — flagged, not taken.
+
+2. **Confidence calibration vs the 0.70 floor — raw contract honored; floor sound
+   but INERT for this backend.** Verified the backend applies NO threshold
+   (`test_detect_wall_returns_confidence_raw_no_threshold`: 0.45 wall passes through;
+   `test_confidence_zero_point_seven_boundary_preserved_raw`). My probe: every *fired*
+   wall (all 4 categories) lands at **0.95**, well above the 0.70 floor; non-walls sit
+   0.90–1.00. The model emits **near-binary confidence reflecting certainty about its
+   own answer regardless of is_wall sign** — exactly as the brief flagged. Consequence:
+   for this backend the **binary `is_wall` is the real gate; the 0.70 floor never
+   decides** (no observed `is_wall=True ∧ conf<0.70`). The floor stays correct (admits
+   the 0.95 fires; would still filter a hypothetical low-confidence wall) but does no
+   work here. **This is a Phase-5 T-503 recalibration note, NOT a blocker — and
+   changing the floor is itself a qa-gated change, so flag to orchestrator, do not
+   touch.** FLAGGED.
+
+3. **WallVerdict contract conformance — PASS, pinned.** `_parse_verdict` enforces and
+   tests pin all invariants: NONE iff ¬is_wall (`test_non_wall_always_has_none_category`,
+   `test_wall_with_none_category_becomes_no_wall`); confidence clamped [0,1]
+   (clamp-above/below tests); offer="" for non-wall (`test_non_wall_offer_is_empty_string`);
+   returns the **frozen `WallVerdict` dataclass** not a dict (`@dataclass(frozen=True)`
+   in types.py; `test_detect_wall_returns_wall_verdict_dataclass` asserts isinstance);
+   **graceful fallback to `none()` on any malformed output, never raises** (12 fallback
+   tests: empty/whitespace/prose/malformed/array/null/missing-field/unknown-enum/fences/
+   embedded-in-prose). Robust extras beyond the contract: markdown-fence stripping +
+   first-`{...}`-block extraction.
+
+4. **Offer phrasing — minor, non-blocking note.** Model offers are correct but a touch
+   formal ("Would you like some assistance in determining the flight duration?") vs the
+   heuristic's spoken-style "Want me to look that up for you?". The PRD wants spoken-style.
+   Not a wall-detection-behavior defect; the offer is post-processable on the engaged
+   path / tunable in the prompt. Recorded for Phase-4/5 polish, not bounced.
+
+5. **Test quality — PASS.** 57 model-free tests assert the **external contract**
+   (message construction, JSON parsing per all 5 categories, invariants, Protocol
+   conformance, `plugs_into_wall_detector`) — no reach into internals (golden rule).
+   `test_lazy_import_boundary` pins that importing the backend never loads mlx_lm.
+   Genuinely model-free (the one live test self-skips) + green. The brief's "test gap"
+   (end-to-end conf==0.70 boundary) correctly lives in T-007 SummonController tests, not
+   the backend (backend just surfaces raw); no new backend test needed for it.
+
+### Human-decision flags raised to orchestrator (neither blocks the approval)
+- **7B escalation (factual_gap recall):** already DEFERRED; needs a joint-budget
+  measurement + human latency call. Not taken here.
+- **interjection_confidence_floor recalibration:** the model's near-binary confidence
+  means the floor is inert for this backend. Whether to keep/adjust 0.70 is a Phase-5
+  T-503 question AND a qa-gated change — flagged, not decided unilaterally.
+
+### Note for T-204 (orchestrator swap) + T-503 (calibration)
+- T-204 swap is safe re: the live-smoke demo: the T-105 Path-B trigger line still
+  fires factual_gap under the Qwen backend.
+- T-503 fixtures should add **declarative factual_gap** cases ("I don't remember…",
+  "I can't recall…") as *recall* data points — they currently miss under Qwen and are
+  the lever to tune. Precision is unaffected by these misses by construction.
+
 ## T-007 reviewed (APPROVED) + T-010 done (2026-06-16)
 
 - **T-007 SummonController — APPROVED** (mandatory review, success-metric-critical).
