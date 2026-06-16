@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "fixture_id": "seed-summon-excluded",
+  "description": "Path-A summon ('Jarvis, add that to my calendar.'): an invited engagement, excluded from the interjection-precision metric (no Path-B candidate).",
+  "source": "seeded from live runs (NOTES.md T-105/T-204)",
+  "config": {
+    "settle_seconds": 0.6,
+    "politeness_gap_seconds": 2.0,
+    "interjection_confidence_floor": 0.7
+  },
+  "timeline": [
+    {
+      "t": 0.0,
+      "kind": "speech_start"
+    },
+    {
+      "t": 0.0,
+      "kind": "utterance",
+      "speaker": "A",
+      "text": "Jarvis, add that to my calendar for seven."
+    },
+    {
+      "t": 2.0,
+      "kind": "speech_end"
+    }
+  ],
+  "candidates": []
+}

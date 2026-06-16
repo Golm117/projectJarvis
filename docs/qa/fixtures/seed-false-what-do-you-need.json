@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "fixture_id": "seed-false-what-do-you-need",
+  "description": "Borderline FP observed this session: 'What do you need?' detected as factual_gap @ 0.95 during a summon exchange \u2014 a fire here is a false interjection (the question is addressed to Jarvis, not an unanswered wall).",
+  "source": "seeded from live runs (qa verdict: FALSE \u2014 see jarvis.eval.seed docstring)",
+  "config": {
+    "settle_seconds": 0.6,
+    "politeness_gap_seconds": 2.0,
+    "interjection_confidence_floor": 0.7
+  },
+  "timeline": [
+    {
+      "t": 0.0,
+      "kind": "speech_start"
+    },
+    {
+      "t": 0.0,
+      "kind": "utterance",
+      "speaker": "A",
+      "text": "What do you need?"
+    },
+    {
+      "t": 1.5,
+      "kind": "speech_end"
+    }
+  ],
+  "candidates": [
+    {
+      "candidate_id": "c1",
+      "match_from": 1.5,
+      "match_to": 8.0,
+      "wall": true,
+      "category": "factual_gap",
+      "label": "false",
+      "rationale": "Question is directed AT Jarvis inside a just-engaged exchange, not an unanswered gap among speakers. Offering to look it up is noise. Precision-first: borderline \u2192 FALSE in the yardstick.",
+      "observed_confidence": 0.95,
+      "observed_offer": "Want me to help with that?",
+      "observed_category": null,
+      "observed_fired": true,
+      "observed_drop_reason": ""
+    }
+  ]
+}

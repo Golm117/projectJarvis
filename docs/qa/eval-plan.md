@@ -239,6 +239,17 @@ A fixture needs **no** captured audio or model output — it is the labeled
 the abort/back-off cases below). In Phase 5, T-502's capture-and-label tooling
 emits this same schema from real opt-in conversations.
 
+> **T-502 landed (2026-06-16).** This schema is now code:
+> `src/jarvis/eval/fixture.py` (`Fixture`/`Moment`/`Candidate`/`Config` +
+> JSON (de)serialization), `capture.py` (the `--capture PATH` recorder),
+> `label.py` (the labeling CLI), `runner.py` (the precision computation), and
+> `seed.py` (the seeded corpus → `docs/qa/fixtures/*.json`). The full
+> capture→label→score workflow + the privacy/retention model + the qa verdict on
+> the live "What do you need?" false positive are in
+> `docs/qa/capture-and-label.md`. The seeded set scores **precision 0.60** on the
+> shipped defaults (3 useful of 5 fires); T-503 sweeps the `config` block against
+> it.
+
 ### Precision computation — matching fires to labels
 
 The eval replays a fixture's timeline through the modules (next section),

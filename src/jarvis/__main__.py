@@ -112,6 +112,20 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="(--live) alias for --voice",
     )
+    # Capture (T-502): opt-in, ephemeral, local-only recording of the session into
+    # an interjection-precision fixture (the labeled-conversation schema T-503
+    # tunes against). Off by default. Records transcripts + events + wall verdicts,
+    # NEVER raw audio; writes only to the named local file; nothing is uploaded.
+    parser.add_argument(
+        "--capture",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="(--live) record this session into an interjection-precision fixture "
+        "at PATH (local JSON file). Opt-in, ephemeral, local-only — records "
+        "transcripts + events, never raw audio. Label it afterward with "
+        "`python -m jarvis.eval.label`.",
+    )
     args = parser.parse_args(argv)
 
     if not args.live:
@@ -143,6 +157,7 @@ def main(argv: list[str] | None = None) -> int:
             stop_after_text=args.stop_after,
             local_brain=local_brain,
             real_voice=real_voice,
+            capture_path=args.capture,
         )
     except MicCaptureError as exc:
         print(f"[live] could not open the microphone: {exc}", file=sys.stderr)

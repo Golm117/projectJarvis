@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "fixture_id": "ff-false-wrong-category",
+  "description": "A real stuck_point wall with a clean opening, but the (mis-firing) verdict carries category factual_gap \u2192 a fire matches the moment but mismatches category \u2192 scored FALSE.",
+  "source": "eval-plan illustrative #3",
+  "config": {
+    "settle_seconds": 0.6,
+    "politeness_gap_seconds": 2.0,
+    "interjection_confidence_floor": 0.7
+  },
+  "timeline": [
+    {
+      "t": 0.0,
+      "kind": "speech_start"
+    },
+    {
+      "t": 0.0,
+      "kind": "utterance",
+      "speaker": "A",
+      "text": "We keep going in circles on this, I'm stuck."
+    },
+    {
+      "t": 2.4,
+      "kind": "speech_end"
+    }
+  ],
+  "candidates": [
+    {
+      "candidate_id": "c1",
+      "match_from": 2.4,
+      "match_to": 8.0,
+      "wall": true,
+      "category": "stuck_point",
+      "label": "useful",
+      "rationale": "Real stuck_point, but a factual_gap fire is the wrong offer \u2192 false.",
+      "observed_confidence": 0.95,
+      "observed_offer": "Want me to look that up?",
+      "observed_category": "factual_gap",
+      "observed_fired": false,
+      "observed_drop_reason": ""
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "fixture_id": "ff-useful-unanswered-question",
+  "description": "B asks, A never answers, clean 2 s opening. One useful fire.",
+  "source": "eval-plan illustrative #1",
+  "config": {
+    "settle_seconds": 0.6,
+    "politeness_gap_seconds": 2.0,
+    "interjection_confidence_floor": 0.7
+  },
+  "timeline": [
+    {
+      "t": 0.0,
+      "kind": "speech_start"
+    },
+    {
+      "t": 0.0,
+      "kind": "utterance",
+      "speaker": "B",
+      "text": "What was the name of that API we used last quarter?"
+    },
+    {
+      "t": 2.4,
+      "kind": "speech_end"
+    }
+  ],
+  "candidates": [
+    {
+      "candidate_id": "c1",
+      "match_from": 2.4,
+      "match_to": 8.0,
+      "wall": true,
+      "category": "unanswered_question",
+      "label": "useful",
+      "rationale": "Unanswered question + clean 2 s opening.",
+      "observed_confidence": 0.85,
+      "observed_offer": "Want me to look that up?",
+      "observed_category": null,
+      "observed_fired": false,
+      "observed_drop_reason": ""
+    }
+  ]
+}

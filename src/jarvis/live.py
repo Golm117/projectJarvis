@@ -194,6 +194,7 @@ def run_live(
     mic_factory: Callable[[], object] | None = None,
     local_brain: bool = False,
     real_voice: bool = False,
+    capture_path: str | None = None,
     _shutdown_event: threading.Event | None = None,
 ) -> list[Utterance] | None:
     """Run the real ambient pipeline on live mic audio.
@@ -227,6 +228,15 @@ def run_live(
             injectable so a harness could substitute one.
         local_brain: if ``True``, wire the real Qwen2.5/MLX backends.
         real_voice: if ``True``, wire the real Claude + ElevenLabs voice adapters.
+        capture_path: if given (the ``--capture PATH`` flag, T-502), record this
+            session into an interjection-precision **fixture** written to that
+            local path on exit — the labeled-conversation schema the precision
+            eval (T-503) tunes against.  **Opt-in, ephemeral, local-only:** off
+            by default (``None`` = no capture); records transcripts + events +
+            wall verdicts, **never raw audio**; writes only to the named local
+            file; nothing is uploaded (capture only observes the pipeline).  The
+            emitted fixture's ground-truth labels are placeholders for the
+            ``jarvis.eval.label`` workflow to fill.  See ``jarvis.eval.capture``.
         _shutdown_event: injectable shutdown event for tests.  In production this is
             created internally; in tests a caller can pre-create one and set it to
             trigger shutdown without sending a real OS signal.
@@ -250,7 +260,22 @@ def run_live(
 
     if now is None:
         now = time.monotonic
-    gate = TurnTakingGate(now)
+
+    # T-502: opt-in capture.  When capture_path is given, a CaptureRecorder
+    # observes the run (the recording gate + a verdict-observing wrap of the wall
+    # backend + the on_* callbacks) and writes a fixture on exit.  Off by default;
+    # records text + events + verdicts, never raw audio; local file only.
+    capture: object | None = None
+    if capture_path is not None:
+        from jarvis.eval.capture import CaptureRecorder
+
+        capture = CaptureRecorder(
+            fixture_id="capture",
+            description=f"captured live session ({'local-brain' if local_brain else 'mock-brain'})",
+        )
+        gate = capture.wrap_gate(now)  # type: ignore[attr-defined]
+    else:
+        gate = TurnTakingGate(now)
 
     # T-501: bounded mode uses a plain list (return contract for smoke tests);
     # always-on mode uses a bounded deque so memory is capped.
@@ -273,17 +298,23 @@ def run_live(
 
     def on_utterance(u: Utterance) -> None:
         _record(u)
+        if capture is not None:
+            capture.record_utterance(u)  # type: ignore[attr-defined]
         print(f"[transcript @ {u.ts:6.2f}s] {u.speaker}: {u.text}")
 
     def on_summary(text: str) -> None:
         print(f"\n   [living summary updated] {text}\n")
 
     def on_interjection(i: Interjection) -> None:
+        if capture is not None:
+            capture.record_interjection(i)  # type: ignore[attr-defined]
         print(
             f"\n   >> JARVIS (interjecting, {i.category.value} @ {i.confidence:.2f}): {i.offer}\n"
         )
 
     def on_engagement(h: EngagementHandoff) -> None:
+        if capture is not None:
+            capture.record_engagement(h)  # type: ignore[attr-defined]
         print("\n   " + "-" * 60)
         print(f"   ** ENGAGEMENT  (trigger: {h.trigger_reason})")
         print(f"      summary : {h.summary or '(none yet)'}")
@@ -297,6 +328,17 @@ def run_live(
     wall_backend = None  # None → AttentionLayer.build uses HeuristicWallBackend
     if local_brain:
         summarizer_backend, wall_backend = _build_local_brain_backends()
+
+    # T-502: when capturing, wrap the wall backend so the recorder observes EVERY
+    # verdict the detector returns — including the ones SummonController drops
+    # (below-floor / no-gap / resumed / backed-off), which on_interjection alone
+    # would never reveal.  If the heuristic default would be used (wall_backend is
+    # None), construct it explicitly here so it can be wrapped.
+    if capture is not None:
+        from jarvis.adapters.backends import HeuristicWallBackend
+
+        inner_wall = wall_backend if wall_backend is not None else HeuristicWallBackend()
+        wall_backend = capture.wrap_wall_backend(inner_wall, now)  # type: ignore[attr-defined]
 
     # Voice selection (T-404): default = PrintResponder/PrintVoice (no keys);
     # real_voice=True = VoiceSession (Claude streaming → ElevenLabs TTS).
@@ -498,6 +540,15 @@ def run_live(
     print("\n" + "=" * 70)
     print(f"  Live run complete — {n} utterance(s) transcribed.")
     print("=" * 70)
+
+    # T-502: write the captured fixture (opt-in; local file only; no audio).
+    if capture is not None and capture_path is not None:
+        fx = capture.save(capture_path)  # type: ignore[attr-defined]
+        n_candidates = len(fx.candidates)
+        print(
+            f"  [capture] wrote {n_candidates} Path-B candidate(s) to {capture_path} "
+            f"(labels pending — run `python -m jarvis.eval.label show {capture_path}`)"
+        )
 
     # Always-on mode: no accumulation contract; return None.
     # Bounded mode: return the list for smoke-test inspection.

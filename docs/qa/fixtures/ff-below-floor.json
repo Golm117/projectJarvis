@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "fixture_id": "ff-below-floor",
+  "description": "A real wall but confidence 0.55 (< 0.70 floor), clean opening. No fire (sub-threshold) \u2192 a miss (recall datum); precision unaffected.",
+  "source": "eval-plan illustrative #5",
+  "config": {
+    "settle_seconds": 0.6,
+    "politeness_gap_seconds": 2.0,
+    "interjection_confidence_floor": 0.7
+  },
+  "timeline": [
+    {
+      "t": 0.0,
+      "kind": "speech_start"
+    },
+    {
+      "t": 0.0,
+      "kind": "utterance",
+      "speaker": "A",
+      "text": "I'm not totally sure what the budget was."
+    },
+    {
+      "t": 2.4,
+      "kind": "speech_end"
+    }
+  ],
+  "candidates": [
+    {
+      "candidate_id": "c1",
+      "match_from": 2.4,
+      "match_to": 8.0,
+      "wall": true,
+      "category": "factual_gap",
+      "label": "useful",
+      "rationale": "Real useful wall, but below the floor \u2192 stays silent (a miss).",
+      "observed_confidence": 0.55,
+      "observed_offer": "Want me to look that up?",
+      "observed_category": null,
+      "observed_fired": false,
+      "observed_drop_reason": ""
+    }
+  ]
+}

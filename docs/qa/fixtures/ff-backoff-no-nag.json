@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "fixture_id": "ff-backoff-no-nag",
+  "description": "The same wall (identical offer) surfaces across two openings. Fire #1 useful; fire #2 suppressed by back-off \u2192 only one fire counted.",
+  "source": "eval-plan illustrative #4",
+  "config": {
+    "settle_seconds": 0.6,
+    "politeness_gap_seconds": 2.0,
+    "interjection_confidence_floor": 0.7
+  },
+  "timeline": [
+    {
+      "t": 0.0,
+      "kind": "speech_start"
+    },
+    {
+      "t": 0.0,
+      "kind": "utterance",
+      "speaker": "A",
+      "text": "What was the vendor's name again?"
+    },
+    {
+      "t": 2.4,
+      "kind": "speech_end"
+    },
+    {
+      "t": 6.0,
+      "kind": "speech_start"
+    },
+    {
+      "t": 6.0,
+      "kind": "utterance",
+      "speaker": "A",
+      "text": "Hmm, still can't recall the vendor."
+    },
+    {
+      "t": 8.4,
+      "kind": "speech_end"
+    }
+  ],
+  "candidates": [
+    {
+      "candidate_id": "c1",
+      "match_from": 2.4,
+      "match_to": 5.5,
+      "wall": true,
+      "category": "factual_gap",
+      "label": "useful",
+      "rationale": "First surfacing of the wall + clean opening \u2192 useful fire.",
+      "observed_confidence": 0.9,
+      "observed_offer": "Want me to find the vendor?",
+      "observed_category": null,
+      "observed_fired": false,
+      "observed_drop_reason": ""
+    },
+    {
+      "candidate_id": "c2",
+      "match_from": 8.4,
+      "match_to": 12.0,
+      "wall": true,
+      "category": "factual_gap",
+      "label": "useful",
+      "rationale": "Same wall, same offer, second opening \u2014 back-off suppresses the repeat (no nagging). Stays silent \u2192 recorded as a miss, not a fire.",
+      "observed_confidence": 0.9,
+      "observed_offer": "Want me to find the vendor?",
+      "observed_category": null,
+      "observed_fired": false,
+      "observed_drop_reason": ""
+    }
+  ]
+}
