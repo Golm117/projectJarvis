@@ -278,17 +278,47 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
   - 2026-06-15 — wrote `docs/audio/asr-spike.md` (method + comparison table + recommendation), two DECISIONS.md entries (runtime choice + dep-group policy). DONE.
 - **Notes:** **DONE.** Recommendation: **mlx-whisper, `base.en`** (English-only; `small.en` = upgrade lever; whisper.cpp/`pywhispercpp` = fallback). Both runtimes are ~25–125× faster than real time and **tie on WER** at `base.en` — choice decided by runtime strategy: mlx-whisper shares the **MLX/Metal/unified-memory** stack Qwen2.5 will use (Phase 2), so one accelerator stack to budget. Short ~3.8 s utterance: mlx 73 ms / whisper.cpp 52 ms — both negligible vs the ~2 s offer budget. Isolated RSS: mlx 463 MB / whisper.cpp 326 MB. No throttling over a 40× single-session run (NOT a multi-hour soak — that's T-504). **⚠️ Coexistence flag:** measured ASR in isolation — the **ASR + Qwen2.5 concurrent always-on budget** must be measured jointly with local-ml-engineer before either side freezes model sizes. **Phase 1 picks up:** T-102 (mic capture loop) / T-104 (`MicSource`) — wire `mlx-whisper base.en` behind `TranscriptSource`. Spike deps live in the `asr-spike` uv group; T-104 promotes only `mlx-whisper` into real package deps. See `docs/audio/asr-spike.md`.
 
+### T-102 — Always-on mic capture loop + AudioSource abstraction
+- **Status:** claimed
+- **Priority:** P1
+- **Role:** sensing-engineer
+- **Owner:** sensing-engineer
+- **Phase:** 1
+- **Created:** 2026-06-15T00:00:00Z
+- **Claimed:** 2026-06-15T00:00:00Z
+- **Completed:** —
+- **Depends on:** T-101
+- **Description:** Stand up the always-on microphone capture path that feeds the VAD (T-103) and, ultimately, ASR (T-104). Define a small **`AudioSource`** abstraction (the seam the VAD + tests consume) so nothing downstream depends on real hardware, and implement a real **mic capture loop** over `sounddevice` (PortAudio): continuous, ring-buffered, fixed frame size / sample rate suited to Silero VAD (**16 kHz mono**, fixed frame). No dropped frames; bounded memory (a fixed-size ring buffer, not unbounded growth). A **fake `AudioSource`** feeds synthetic frames in tests so the buffer/loop logic is exercised deterministically with no real mic. Opening the input device triggers a macOS mic-permission prompt for the terminal process; attempt a brief live smoke capture and, **if permission is denied or no device is available, document it — do NOT fail the task or fabricate** a result.
+- **Acceptance:** An `AudioSource` Protocol + a real `SoundDeviceMicSource` (16 kHz mono, fixed frame) + a fake `AudioSource`; a bounded ring buffer with proven no-unbounded-growth behavior. Tests drive the capture/buffer logic via the fake source and assert frame shape/rate, ring-buffer wrap/eviction, and bounded memory — deterministic, no real mic. `uv run pytest -q` green (135 baseline + new), ruff clean. `sounddevice` (+ PortAudio) recorded in DECISIONS.md. Live-mic smoke test either runs (report exactly what happened) or is documented as needing the user to grant mic permission (no fabricated capture).
+- **Progress:**
+  - 2026-06-15 — claimed; expanded from the Phase-1 one-liner.
+- **Notes:** Frozen seams to align to (do not reshape): the VAD (T-103) drives `TurnTakingGate.on_speech_start()`/`on_speech_end()` (edge API, gate stamps time from its injected clock); `MicSource` (T-104) feeds `Utterance` behind the `TranscriptSource` seam. `AudioSource` is the new abstraction this task introduces.
+
+### T-103 — Silero VAD speech/silence segmentation
+- **Status:** open
+- **Priority:** P1
+- **Role:** sensing-engineer
+- **Owner:** —
+- **Phase:** 1
+- **Created:** 2026-06-15T00:00:00Z
+- **Claimed:** —
+- **Completed:** —
+- **Depends on:** T-102
+- **Description:** Integrate **Silero VAD** (prefer the lightweight `silero-vad` pip package; torch is acceptable on the M5 — note the dep weight). Consume audio frames from the `AudioSource` (T-102), segment speech vs. silence, and **emit boundary events that drive the `TurnTakingGate`'s `on_speech_start()` / `on_speech_end()` edge API** — the gate stamps time from its injected clock, so the VAD emits *edges*, not timestamps. Keep VAD sensitivity/threshold configurable (constructor-injected). Aligns the live audio path to the same gate the Phase-0 `ScriptedSource` drove.
+- **Acceptance:** A `SileroVad` segmenter that consumes `AudioSource` frames and emits speech-start/speech-end edges onto an injected `TurnTakingGate` (and/or a generic edge callback). Tests feed synthetic frames (silence vs. speech-energy) and assert the correct *sequence* of speech-start/speech-end edges — deterministic, no real mic. Threshold/sensitivity configurable. Optional live-mic check skipped when no device/permission. `uv run pytest -q` green, ruff clean. `silero-vad` (+ torch) recorded in DECISIONS.md.
+- **Progress:**
+  - 2026-06-15 — open; expanded from the Phase-1 one-liner. Depends on T-102's `AudioSource`.
+- **Notes:** The edge API is frozen (`TurnTakingGate.on_speech_start`/`on_speech_end`, DECISIONS.md 2026-06-15) — emit edges, the gate owns the clock. Hand off to **T-104 (MicSource)**: wire this VAD + `mlx-whisper base.en` into `Utterance` events behind the `TranscriptSource` seam, stamping `Utterance.ts` from the VAD timeline.
+
 ---
 
 ## Planned tasks (Phase 1+ — one-liners, expanded to full entries when the phase becomes active)
 
 ### Phase 1 — Real ears
-- (planned T-102) Always-on mic capture loop — ring-buffered, low-latency. [sensing-engineer]
-- (planned T-103) Silero VAD gating — speech/silence segmentation feeding the gate and ASR. [sensing-engineer]
 - (planned T-104) MicSource adapter — wire VAD + ASR into `Utterance` events behind `TranscriptSource`. [sensing-engineer]
 - (planned T-105) Live-transcript smoke test on the M5 — speak, see the transcript. [sensing-engineer]
 
-_(T-101 expanded to a full entry below — it is the active Phase 1 spike.)_
+_(T-101, T-102, T-103 expanded to full entries below — Phase 1 is active.)_
 
 ### Phase 2 — Local understanding
 - (planned T-201) Qwen2.5/MLX runtime spike — pick model size (e.g. 1.5B vs 3B) by latency + quality. [local-ml-engineer]
