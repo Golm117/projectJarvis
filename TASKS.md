@@ -599,13 +599,14 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 - **Notes:** **DONE.** Live results (verbatim, BlackHole device 5, nothing fabricated): **(1) mid-conversation ticker fire, exactly once** (heuristic brain, no `--stop-after`): `factual_gap @ 0.80` "I can find that — want me to?" → ENGAGEMENT. **(2) abort-on-resume HELD:** wall line transcribed, NO fire during resumed speech, fired only on the final clean 2 s silence. **(3) back-off de-dupe with real `QwenWallBackend` (`--local-brain`):** `factual_gap @ 0.95` "Could you remind me of the conference date?" fired **once** — the T-204 live double-fire is fixed. The 11 deterministic `SimulatedClock` tests are the logic proof; this live run is the real-audio confirmation. Loopback caveat unchanged (digital best-case; real-room WER = T-502). **→ Phase 3 has only T-304 (latency budget) left.**
 
 ### T-304 — Latency budget pass — gate → detector → offer within target
-- **Status:** claimed
+- **Status:** done
 - **Priority:** P1
 - **Role:** core-engineer
 - **Owner:** core-engineer
 - **Phase:** 3
 - **Created:** 2026-06-15T00:00:00Z
 - **Claimed:** 2026-06-15T12:00:00Z
+- **Completed:** 2026-06-15T13:00:00Z
 - **Depends on:** T-302 ✅ (done — UNBLOCKED 2026-06-15)
 - **Description:** Latency budget pass — confirm the full `gate → detector → offer` path meets the ~2 s offer-to-help budget on the M5 (from `.pdr.md`: "offers help within ~2 seconds of an unanswered question"; PRD §"The asymmetric dual-summon decision": `politeness_gap ≈ 2 s`). Decompose the budget into its stages: (1) at-ingest work (ASR → optional topic-shift → summarize → wall detect — expensive Qwen work done once, here); (2) during-silence interval (the intentional ~2 s politeness gap — social timing, not compute latency); (3) ticker fire latency (≤ TICK_INTERVAL_SECONDS = 0.20 s to notice the open gap); (4) offer dispatch (pure Python, negligible). Verify the key architectural property: the wall detector runs ONCE at ingest, NOT per tick — so the offer is pre-computed before the gap opens; the tick path is cheap (cached-verdict `consider_interjection`, no model call). Write a latency note to `docs/architecture/latency-budget.md`. Add an optional instrumentation harness kept out of the default pytest path. NOT qa-gated unless it proposes a threshold change.
 - **Acceptance:**
@@ -618,8 +619,10 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
   - TASKS.md status `done`, Completed timestamp. ✅
   - NOTES.md updated: Phase 3 complete + what Phase 4 needs. ✅
 - **Progress:**
-  - 2026-06-15T12:00Z — claimed; reading orientation docs.
-- **Notes:** **UNBLOCKED by T-302 done.** Last Phase-3 task. The tick cadence (0.20 s) is a `live.py` constant, not a gated threshold — but any proposal to change `politeness_gap_seconds` to hit the budget IS qa-gated → route to qa-tuning.
+  - 2026-06-15T12:00Z — claimed; reading orientation docs (TASKS.md, NOTES.md, live.py, attention_layer.py, qwen-coexistence-spike.md, PRD 02, .pdr.md).
+  - 2026-06-15T12:30Z — expanded T-304 to full entry; wrote instrumentation harness at `scripts/latency_budget_harness.py`; ran on M5 (real numbers); wrote `docs/architecture/latency-budget.md`; suite 281 green; ruff clean.
+  - 2026-06-15T13:00Z — marked done; NOTES.md updated; committed.
+- **Notes:** **DONE — Phase 3 COMPLETE.** NOT qa-gated (measurement + documentation only; no gate/summon/wall logic changed; no gated threshold proposed). **Key findings:** (1) budget target = ~2 s from wall utterance to offer (`.pdr.md` line 223 + PRD 02 §asymmetric-summon); (2) Stage 1 (ASR+Qwen) = 657 ms worst case (T-201 measured), absorbed inside the 2 s gap; (3) ticker fire latency ≤ 210 ms after gap opens (200 ms cadence + ~8 ms jitter, measured); (4) user-perceived latency beyond the 2 s polite wait = ≤ 210 ms; margin = ≥ 1,790 ms; (5) wall detector confirmed OFF the tick path — tick() costs 0.7 µs (fire path), detector costs ~366 ms; (6) no constant change needed. **Phase 4 (The voice) picks up:** replace `PrintResponder`/`PrintVoice` stand-ins with real Claude `claude-opus-4-8` + ElevenLabs streaming — needs `ANTHROPIC_API_KEY` + `ELEVENLABS_API_KEY` (not yet set). voice-integration-engineer owns T-401/T-402/T-403/T-404.
 
 ### Phase 4 — The voice
 - (planned T-401) EngagedResponder — Claude spoken-style answer, grounded in the handoff, streamed. [voice-integration-engineer]

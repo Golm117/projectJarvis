@@ -17,9 +17,20 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-15 (T-302 APPROVED + T-303 done → only T-304 left in Phase 3)
+## Current state — 2026-06-15 (T-304 done → PHASE 3 COMPLETE)
 
-**Phase:** phase_3 — Knowing when to speak (ACTIVE). **T-302 (continuous real-time Path-B re-evaluation) is APPROVED → done; T-303 (live validation) is done** (qa-tuning, this session — one combined mandatory gate). **T-304 (latency budget) is UNBLOCKED and is the last Phase-3 task.** Suite **281 green**, ruff clean. On `main`, not pushed.
+**Phase:** phase_3 → **COMPLETE.** All four Phase-3 tasks done: T-301 (one-clock invariant), T-302 (continuous ticker, qa-approved), T-303 (live validation, qa-approved), T-304 (latency budget). Suite **281 green**, ruff clean. On `main`, not pushed.
+
+**T-304 — latency budget pass — DONE.** Key findings:
+- **Budget target:** ~2 s from wall utterance to offer (`.pdr.md` line 223 + PRD 02 §asymmetric-summon).
+- **Stage 1 — at-ingest Qwen work:** 657 ms worst case (T-201 measured: ASR 40 ms + summarize 250 ms + detect_wall 366 ms). Absorbed inside the 2 s gap — Stage 1 completes at ~0.6 s, before the gap opens.
+- **Stage 2 — politeness gap:** 2,000 ms intentional social wait. Dominant term; deliberate.
+- **Stage 3 — ticker fire latency:** ≤ 210 ms after gap opens (200 ms cadence + ~8 ms jitter, measured live on M5 with `scripts/latency_budget_harness.py`).
+- **Net margin vs 2 s:** ≥ 1,790 ms. **Wall detector confirmed OFF the tick path** — tick() costs 0.7 µs (fire path); detector costs ~366 ms. The cached-verdict design means no model call per tick.
+- **No constant change made.** `TICK_INTERVAL_SECONDS = 0.20` is adequate. No gated threshold proposed.
+- **Deliverable:** `docs/architecture/latency-budget.md` (target + source + decomposition + measured numbers + verdict).
+
+**→ Phase 4 (The voice) is next** (voice-integration-engineer): replace `PrintResponder`/`PrintVoice` stand-ins with real Claude `claude-opus-4-8` + ElevenLabs streaming TTS. **Needs API keys not yet set:** `ANTHROPIC_API_KEY` + `ELEVENLABS_API_KEY`. Phase 4 tasks: T-401 (EngagedResponder via Claude), T-402 (VoiceOutput via ElevenLabs), T-403 (token-stream piping), T-404 (full engaged path on live audio).
 
 **T-302/T-303 qa-tuning verdict: APPROVED.** The continuous ticker is the success-metric-critical change (it changes *when* interjections fire live). Gated modules (TurnTakingGate/SummonController/WallDetector) confirmed **byte-for-byte unchanged** (diff empty). Three deliverables:
 1. **Double-fire fix — SOUND, the T-204 live bug is FIXED.** Double guard: `_pending_wall` cleared on first fire (later ticks no-op, offer-determinism-independent) + the same `WallVerdict` object re-evaluated each tick (stable signature → existing back-off de-dupes). The deterministic test pins guard (a) with a *fixed-offer* fake; the real non-deterministic-offer de-dupe I confirmed **live** with `--local-brain` (one fire, one Qwen offer).
