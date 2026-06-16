@@ -155,7 +155,7 @@ verify message construction without a model.
 
 ---
 
-## Wall-detection backend contract (T-203) — DESIGN STUB
+## Wall-detection backend contract (T-203) — DONE
 
 **Seam (frozen, T-005):**
 ```python
@@ -173,44 +173,60 @@ class WallVerdict:
     offer: str               # empty iff is_wall is False
 ```
 
-**Implementation target:** `QwenWallBackend` (`src/jarvis/ml/wall.py`) — T-203.
+**Implementation:** `QwenWallBackend` (`src/jarvis/ml/wall.py`) — T-203 DONE.
 
-Key requirements for T-203 (from T-201 spike findings):
-1. Parse the model's JSON output into a `WallVerdict` dataclass.  The schema:
-   `{"is_wall": bool, "category": str, "confidence": float, "offer": str}`.
-2. `category` coerced via `WallCategory(str_value)` — it's a `StrEnum`.
-3. **Do NOT apply a confidence threshold** — that's `SummonController` policy
-   (T-007, `interjection_confidence_floor=0.70`).  Surface confidence raw.
-4. **Favor precision over recall** in the prompt — 3B has a false-positive tendency
-   (it flagged a clear decision as `explicit_ask` in 1/4 test scenarios).  Tighten
-   with "only flag if confident" + stronger no-wall guidance.
-5. Put the JSON schema in the **user message** (not the system message) — the spike
-   found this produces more reliable JSON than embedding it in the system prompt.
-6. `max_tokens=120` (spike measured ~366 ms at this budget).
-7. On JSON parse failure, return `WallVerdict.none()` (never raise to the caller).
-
-**Prototype prompt design (for T-203 to refine):**
-
-```
-SYSTEM:
-You are an assistant that detects when a conversation hits a wall — an
-unanswered question, factual gap, stuck point, or explicit request for help.
-Be conservative: only flag a wall when you are confident one exists.
-
-USER:
-TRANSCRIPT:
-{transcript}
-
-SUMMARY:
-{summary}
-
-Reply with ONLY a JSON object:
-{"is_wall": bool, "category": "unanswered_question"|"factual_gap"|"stuck_point"|"explicit_ask"|"none", "confidence": 0.0-1.0, "offer": "one sentence Jarvis would say, or empty string"}
+```python
+class QwenWallBackend:
+    def __init__(self, model: QwenModel, max_tokens: int = 120) -> None: ...
+    def detect_wall(self, transcript: str, summary: str) -> WallVerdict: ...
 ```
 
-**Spike-measured latency:** ~366 ms median (warm, in-process).
+### Prompt design (precision-over-recall)
 
-This stub will be filled in when T-203 implements `QwenWallBackend`.
+The central design principle is precision over recall, driven by the interjection
+precision success metric and the T-201 false-positive finding.
+
+**System message:** positions the model as a conservative detector; explicitly
+states that statements, plans, and decisions are NOT walls (negative examples
+from the T-201 false positive: "we'll send the PR in 10 minutes" is a plan,
+"I think we should go with option A" is a decision — both non-walls);
+"when in doubt, return none"; reserves `confidence >= 0.80` for clear cases.
+
+**User message:** per-category definitions each with a positive example AND a
+negative example (the negative example is the key precision tool); JSON schema
+on a single line at the end of the user message (proximity to the output
+instruction improves compliance on 3B, per T-201 spike finding).
+
+**T-201 false-positive fix:** the 3B model previously flagged a clear decision
+("we'll send the PR in 10 minutes") as `explicit_ask`. The prompt now explicitly
+addresses this class: `explicit_ask` requires a verbally expressed WISH or DESIRE,
+not a statement of intent or plan. Live test confirms fix (see below).
+
+**Confidence calibration:** model instructed to use `>= 0.80` only for
+unambiguous cases. `confidence` is surfaced raw — the backend never applies the
+`interjection_confidence_floor=0.70` cut (that is `SummonController` policy, T-007).
+
+**Graceful fallback:** JSON parse failure → `WallVerdict.none()`. Handles
+markdown fences, JSON embedded in prose, missing fields, invalid enum values,
+out-of-range confidence, and `is_wall=True` with `category="none"` (normalised).
+
+### Live run results (T-203, Qwen2.5-3B-Instruct-4bit, weights cached from T-201)
+
+| Scenario | Expected | Actual | Pass? |
+|---|---|---|---|
+| factual_gap: "I honestly don't remember what date we picked" | `is_wall=True, factual_gap` | `is_wall=False, confidence=0.90` | FAIL |
+| fp_statement (T-201 false positive): decision + plan | `is_wall=False` | `is_wall=False, confidence=1.00` | PASS |
+| stuck_point: "we keep going in circles — we've been over this three times" | `is_wall=True, stuck_point` | `is_wall=True, stuck_point, 0.95` | PASS |
+| explicit_ask: "I wish I knew the exact flight duration" | `is_wall=True, explicit_ask` | `is_wall=True, explicit_ask, 0.95` | PASS |
+| plain_statement: "Great, so we're going with the Tuesday slot then" | `is_wall=False` | `is_wall=False, confidence=1.00` | PASS |
+
+**4/5 passing.** The critical T-201 false-positive is fixed. The `factual_gap`
+miss (is_wall=False despite confidence=0.90) is a qa-tuning finding: the model
+may be returning non-wall confidently even when the situation is a real factual
+gap — the confidence value is not calibrated to the is_wall decision here.
+This is the key item for qa-tuning to investigate.
+
+**Spike-measured latency (from T-201):** ~366 ms median (warm, in-process, at max_tokens=100–120).
 
 ---
 

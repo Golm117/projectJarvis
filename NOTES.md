@@ -17,7 +17,24 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-15 (T-202 done → local summarizer backend shipped; Phase 2 in progress)
+## Current state — 2026-06-15 (T-203 in review → QwenWallBackend built; awaiting qa-tuning)
+
+**Phase:** phase_2 — Local understanding (ACTIVE). T-201 (spike), T-202 (summarizer backend), and T-203 (wall-detection backend) are **DONE** (local-ml-engineer). Suite **264 green**, ruff clean. On `main`, not pushed.
+
+**What landed (T-203):**
+- **`src/jarvis/ml/wall.py`** — `QwenWallBackend` (real `WallBackend` seam).
+- **`tests/test_qwen_wall_backend.py`** — 57 model-free tests + 1 live test.
+- **`docs/ml/slm-backend.md`** — wall-detection section updated from stub to done with live results.
+
+**T-203 is QA-GATED — in `review`. Do NOT proceed to T-204 until qa-tuning reviews and approves.**
+
+**Key finding for qa-tuning:** The live run shows 4/5 scenarios passing. The `factual_gap` scenario FAILS: model returns `is_wall=False, confidence=0.90` for "I honestly don't remember what date we picked." The model chose not to flag is_wall despite high confidence. The T-201 false positive (clear decision flagged as explicit_ask) is FIXED. See T-203 Notes in TASKS.md for the full qa-tuning review brief.
+
+**→ T-204 (swap mock→local in orchestrator) is BLOCKED pending qa-tuning review of T-203.**
+
+---
+
+## Prior state — 2026-06-15 (T-202 done → local summarizer backend shipped; Phase 2 in progress)
 
 **Phase:** phase_2 — Local understanding (ACTIVE). T-201 (spike) and T-202 (summarizer backend) are **DONE** (local-ml-engineer). Suite **207 green**, ruff clean. On `main`, not pushed.
 

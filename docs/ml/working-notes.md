@@ -4,6 +4,34 @@ _(scratchpad for in-flight thinking; promote durable findings to topic files)_
 
 ---
 
+## T-203 done (2026-06-15) — QwenWallBackend shipped (in review for qa-tuning)
+
+**What landed:**
+- `src/jarvis/ml/wall.py` — `QwenWallBackend` (thin adapter over shared `QwenModel`).
+  `detect_wall(transcript, summary) -> WallVerdict`. Precision-over-recall prompt.
+- `tests/test_qwen_wall_backend.py` — 57 model-free unit tests + 1 live test.
+- `src/jarvis/ml/__init__.py` — now re-exports `QwenWallBackend`.
+- `docs/ml/slm-backend.md` — wall-detection section updated from stub to done.
+
+**Suite: 264 green (207 baseline + 57 new), ruff clean.**
+
+**Live run results (5 scenarios):** 4/5 PASS.
+- T-201 false positive (clear decision falsely flagged): FIXED, PASS.
+- stuck_point, explicit_ask, plain_statement: PASS.
+- factual_gap: FAIL — is_wall=False despite confidence=0.90. The model returned
+  high confidence but still chose not to flag it as a wall. This is unusual and
+  qa-tuning should scrutinize it — it may indicate that the precision prompt
+  over-corrects for factual_gap. The HeuristicWallBackend correctly catches this
+  pattern; the Qwen backend's factual_gap recall is lower than the heuristic.
+
+**For T-204:** T-204 should be aware that swapping the mock→real backend will
+change behavior for factual_gap — the real backend may be less sensitive than
+the heuristic. qa-tuning must evaluate before T-204 merges.
+
+**Task status:** `review` (qa-tuning gated). Do NOT merge until qa-tuning signs off.
+
+---
+
 ## T-202 done (2026-06-15) — local summarizer backend shipped
 
 **What landed:**

@@ -18,6 +18,15 @@ Keep entries short. One paragraph per field is plenty. If it takes more, it prob
 
 ---
 
+## 2026-06-15 — QwenWallBackend prompt: precision-over-recall + T-201 false-positive fix (T-203)
+
+**Decided by:** Claude Code (local-ml-engineer) — T-203
+**Status:** accepted (pending qa-tuning review)
+**Context:** T-203 implements `QwenWallBackend` — the real `WallBackend` seam. The T-201 spike identified a false-positive: Qwen2.5-3B-Instruct-4bit flagged a clear statement/plan ("we'll send the PR in 10 minutes") as `explicit_ask`. The success metric is interjection precision; a false-positive interjection is more harmful than a false-negative silence.
+**Decision:** (1) **Precision-over-recall prompt strategy.** The system prompt explicitly states that "statements, decisions, plans, and declarations are NOT walls" with concrete negative examples from the T-201 false-positive class; mandates "when in doubt, return none"; reserves `confidence >= 0.80` for clear cases. (2) **Per-category negative examples in the user message.** Each of the four wall categories has a positive example AND a negative example — the negative example is the key disambiguation tool for 3B. (3) **JSON schema in the user message** (not the system message), on a single line immediately before the output instruction. (4) **Confidence surfaced raw** — the backend applies no threshold. (5) **Graceful fallback:** `_parse_verdict` returns `WallVerdict.none()` on any parse failure; enforces `NONE iff ¬is_wall` and `offer=""` for non-walls.
+**Rationale:** The false-positive is the more damaging failure mode (an unwanted interjection disrupts the user and erodes trust; a missed wall just means Jarvis stays silent). The negative-example strategy was chosen over a temperature reduction (MLX's `mlx_lm.generate` doesn't expose a temperature parameter in the version used) and over a 7B upgrade (7B requires a new joint-budget measurement and a human decision on the latency trade-off). Live test confirms T-201 false positive is fixed; factual_gap recall is reduced compared to the heuristic (for qa-tuning to evaluate).
+**Alternatives considered:** Temperature reduction (rejected — not exposed in the mlx_lm interface used). 7B-Instruct-4bit upgrade (deferred — needs human approval + new budget measurement). Few-shot examples in the prompt (rejected for now — adds significant tokens and latency; revisit if qa-tuning finds precision still insufficient after T-203).
+
 ## 2026-06-15 — `mlx-lm` promoted from `slm-spike` to real deps; `QwenModel` shared-loader design (T-202)
 
 **Decided by:** Claude Code (local-ml-engineer) — T-202
