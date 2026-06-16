@@ -381,14 +381,14 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 - **Notes:** DONE (not a mandatory-review trigger — spike only, no qa-tuning-gated module changed). **Recommendation frozen:** `mlx-community/Qwen2.5-3B-Instruct-4bit`; ASR stays `base.en`. **1.5B eliminated:** returns `is_wall: false` on every test including unambiguous `explicit_ask` — non-functional for detect_wall. **3B joint budget: 657 ms median** (ASR 40 ms + summarize 250 ms + detect_wall 366 ms) vs 2,000 ms offer budget → 1,343 ms margin. **MUST use chat template** (tokenizer.apply_chat_template) — raw prompts degrade quality and inflate latency. Peak joint RSS 3,271 MB (64 GB machine). No thermal throttling. `mlx-lm` promoted from `slm-spike` group to real deps at T-202. **→ T-202 (local summarizer backend) is UNBLOCKED.** Also produce `docs/ml/slm-backend.md` (per role spec "first task") at T-202 time.
 
 ### T-202 — Local summarizer backend (Qwen2.5/MLX)
-- **Status:** claimed
+- **Status:** done
 - **Priority:** P0
 - **Role:** local-ml-engineer
 - **Owner:** local-ml-engineer
 - **Phase:** 2
 - **Created:** 2026-06-15T00:00:00Z
 - **Claimed:** 2026-06-15T15:00:00Z
-- **Completed:**
+- **Completed:** 2026-06-15T16:00:00Z
 - **Depends on:** T-201
 - **Description:** Implement the real `SummarizerBackend.summarize(transcript, prev) -> str` behind the frozen seam declared in `jarvis/core/living_summary.py`, backed by `mlx-community/Qwen2.5-3B-Instruct-4bit` via `mlx_lm`. Introduce a `src/jarvis/ml/` package containing: (1) a reusable `QwenModel` loader that loads `(model, tokenizer)` once lazily and exposes a small `generate()` helper; and (2) a thin `QwenSummarizerBackend` that takes the loader via injection and implements `summarize()`. The loader is designed to serve both T-202 (summarize) and T-203 (detect_wall) — same loader instance, no double-load. Must use `tokenizer.apply_chat_template` with proper system/user messages (NOT raw string prompts). Promote `mlx-lm` from the `slm-spike` uv group into real `[project.dependencies]` (same pattern as `mlx-whisper` at T-104). Also produce `docs/ml/slm-backend.md` (the role spec's "first deliverable" per the agent spec). T-202 is NOT qa-tuning-gated (the summarizer is not a gate/summon/wall module).
 - **Acceptance:**
@@ -403,7 +403,8 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
   - `docs/ml/slm-backend.md` written (SLM runtime choice, prompt designs, summarize/detect_wall contracts, shared loader design).
 - **Progress:**
   - 2026-06-15T15:00Z — claimed; reading orientation docs.
-- **Notes:** NOT qa-tuning-gated. Handoff to T-203 (QwenWallBackend): reuse the same `QwenModel` loader — construct once, inject into both backends.
+  - 2026-06-15T16:00Z — shipped `src/jarvis/ml/` package (`__init__.py`, `qwen.py`, `summarizer.py`); 25 new tests in `tests/test_qwen_summarizer.py` (24 model-free + 1 live); promoted `mlx-lm` to real deps; wrote `docs/ml/slm-backend.md` and DECISIONS.md entry. Suite 207 green (182 baseline + 25), ruff clean.
+- **Notes:** DONE (not qa-tuning-gated — summarizer is not a gate/summon/wall module). **Handoff to T-203 (QwenWallBackend):** reuse `QwenModel` from `src/jarvis/ml/qwen.py` — construct once, inject into both `QwenSummarizerBackend` AND `QwenWallBackend`. The loader is ready; just add `src/jarvis/ml/wall.py` with a `QwenWallBackend` that parses the model's JSON into `WallVerdict`. Prompt design stub in `docs/ml/slm-backend.md` §wall. T-203 IS qa-tuning-gated (wall behavior is the success-metric-critical path).
 - (planned T-203) Local wall-detection backend — implement `detect_wall()` with structured output. [local-ml-engineer]
 - (planned T-204) Swap mock backend → local backend behind existing interfaces; re-run core tests green. [local-ml-engineer]
 

@@ -18,6 +18,15 @@ Keep entries short. One paragraph per field is plenty. If it takes more, it prob
 
 ---
 
+## 2026-06-15 — `mlx-lm` promoted from `slm-spike` to real deps; `QwenModel` shared-loader design (T-202)
+
+**Decided by:** Claude Code (local-ml-engineer) — T-202
+**Status:** accepted
+**Context:** T-202 implements the real `SummarizerBackend` on Qwen2.5-3B/MLX.  At T-201, `mlx-lm` was in the isolated `slm-spike` uv dependency group (per the "spike deps stay isolated until the runtime is shipped" policy, DECISIONS.md "mlx-lm in slm-spike…").  T-202 ships the runtime, so the same promotion pattern as `mlx-whisper` at T-104 applies.  Separately, the question of whether to use a single class implementing both Protocols or two thin adapter classes sharing a loader was decided here.
+**Decision:** (1) **Promote `mlx-lm>=0.31.3` from the `slm-spike` uv group into real `[project.dependencies]`.**  The `slm-spike` group is retained but now only documents the isolation of the original benchmark harness.  (2) **Shared-loader design: one `QwenModel` class + two thin adapter classes.**  `QwenModel` (`src/jarvis/ml/qwen.py`) holds the `(model, tokenizer)` pair and exposes a `generate(messages, max_tokens)` helper.  `QwenSummarizerBackend` (T-202) and `QwenWallBackend` (T-203) each take the loader via constructor injection.  The caller constructs one `QwenModel()` at startup and injects the same instance into both backends — no double-load.  This mirrors the `Transcriber` / `FrameClassifier` injection pattern in the audio path.
+**Rationale:** Promoting `mlx-lm` at the task that actually ships the runtime (T-202) keeps the dependency surface honest — the package's runtime deps reflect exactly what is needed to run the always-on ambient half.  Two separate thin adapter classes (instead of one class implementing both protocols) is cleaner for the seam discipline: `LivingSummary` and `WallDetector` each inject their own backend; using two injections of the same combined class would require both to know about each other's seam, which is a coupling the architecture avoids.  The shared loader resolves the "two classes but one model" tension without coupling the protocols.
+**Alternatives considered:** Keep `mlx-lm` in the spike group until T-204 wires the live backend (rejected — T-202 ships the `QwenSummarizerBackend` as a real runtime backend; the dep is needed now).  One combined class implementing both `SummarizerBackend` and `WallBackend` (considered in working-notes.md — rejected in favour of two thin classes + shared loader; the combined class would bloat the seam surface and is harder to test in isolation).  Module-level singleton for the loader (rejected — fights the injected-backend discipline; a singleton is a hidden global).
+
 ## 2026-06-15 — Qwen2.5-3B-Instruct-4bit selected as Phase-2 SLM; ASR stays base.en (T-201)
 
 **Decided by:** Claude Code (local-ml-engineer) — T-201 spike

@@ -7,10 +7,11 @@ requires-python = ">=3.11"
 license = { text = "Proprietary" }
 authors = [{ name = "project-jarvis" }]
 # Runtime deps for the always-on ambient half. `sounddevice` (capture, T-102),
-# `silero-vad`+`numpy` (VAD, T-103), `mlx-whisper` (ASR, T-104) — all shipped
-# runtime behind their seams. The cloud/SLM deps (anthropic, elevenlabs, mlx-lm)
-# arrive in their phases behind interfaces.
+# `silero-vad`+`numpy` (VAD, T-103), `mlx-whisper` (ASR, T-104), `mlx-lm`
+# (Qwen2.5-3B SLM backend, T-202) — all shipped runtime behind their seams.
+# The cloud deps (anthropic, elevenlabs) arrive in Phase 4 behind interfaces.
 dependencies = [
+    "mlx-lm>=0.31.3",
     "mlx-whisper>=0.4.3",
     "numpy>=2.4.6",
     "silero-vad>=6.2.1",

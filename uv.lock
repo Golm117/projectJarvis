@@ -412,6 +412,7 @@ name = "jarvis"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [
+    { name = "mlx-lm" },
     { name = "mlx-whisper" },
     { name = "numpy" },
     { name = "silero-vad" },
@@ -438,6 +439,7 @@ slm-spike = [
 
 [package.metadata]
 requires-dist = [
+    { name = "mlx-lm", specifier = ">=0.31.3" },
     { name = "mlx-whisper", specifier = ">=0.4.3" },
     { name = "numpy", specifier = ">=2.4.6" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },

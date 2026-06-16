@@ -4,6 +4,37 @@ _(scratchpad for in-flight thinking; promote durable findings to topic files)_
 
 ---
 
+## T-202 done (2026-06-15) — local summarizer backend shipped
+
+**What landed:**
+- `src/jarvis/ml/__init__.py` — package; re-exports `QwenModel`, `QwenSummarizerBackend`.
+- `src/jarvis/ml/qwen.py` — `QwenModel` shared loader. Lazy `mlx_lm` import inside `_ensure_loaded()`. `generate(messages, max_tokens)` applies `tokenizer.apply_chat_template` internally. One instance shared between T-202 + T-203 backends.
+- `src/jarvis/ml/summarizer.py` — `QwenSummarizerBackend` (thin adapter). `_build_messages(transcript, prev)` exported for model-free tests. System prompt: concise note-taker + no-hallucination instruction. User prompt: transcript + prev + "write updated summary" instruction. `max_tokens=80`.
+- `tests/test_qwen_summarizer.py` — 25 tests (24 model-free unit tests + 1 live test that self-skips when weights unavailable). The live test PASSED on this M5 (weights cached from T-201).
+- `docs/ml/slm-backend.md` — SLM runtime choice, shared-loader design, both seam contracts (summarize done; detect_wall stubbed for T-203).
+- `mlx-lm>=0.31.3` promoted from `slm-spike` to real `[project.dependencies]`.
+- `DECISIONS.md` entry for the dep promotion + shared-loader design.
+
+**Suite: 207 green (182 baseline + 25 new), ruff clean.**
+
+---
+
+## T-203 prep notes (next task) — QwenWallBackend
+
+T-203 adds `src/jarvis/ml/wall.py` with `QwenWallBackend`. Key notes:
+
+1. **Reuse `QwenModel`** — import from `jarvis.ml.qwen`; no new model loading.
+2. **Return `WallVerdict` dataclass**, not a dict.  Parse the model's JSON via `json.loads()`; construct `WallVerdict(is_wall=..., category=WallCategory(...), confidence=..., offer=...)`.
+3. **On JSON parse failure**, return `WallVerdict.none()` — never raise to the caller.
+4. **Do NOT threshold `confidence`** — that's `SummonController.interjection_confidence_floor=0.70` policy.  Surface raw.
+5. **Prompt design:** put the JSON schema in the **user** message (not system). Strong "only flag if confident" instruction (3B has a false-positive bias — flags clear decisions as `explicit_ask`).
+6. **`max_tokens=120`** (spike: ~366 ms at this budget).
+7. **T-203 IS qa-tuning-gated** (wall behavior is the success metric). Submit for qa-tuning review before marking done.
+
+Prompt stub in `docs/ml/slm-backend.md` §wall-detection-backend-contract.
+
+---
+
 ## T-201 spike findings (2026-06-15) — now in qwen-coexistence-spike.md
 
 **Key facts to carry into T-202/T-203:**

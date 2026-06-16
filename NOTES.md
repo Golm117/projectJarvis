@@ -17,7 +17,35 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-15 (T-201 done → Qwen2.5 size frozen; Phase 2 active)
+## Current state — 2026-06-15 (T-202 done → local summarizer backend shipped; Phase 2 in progress)
+
+**Phase:** phase_2 — Local understanding (ACTIVE). T-201 (spike) and T-202 (summarizer backend) are **DONE** (local-ml-engineer). Suite **207 green**, ruff clean. On `main`, not pushed.
+
+**What landed (T-202):**
+- **`src/jarvis/ml/`** — new Phase-2 SLM package. Three files: `__init__.py`, `qwen.py` (`QwenModel` shared lazy loader), `summarizer.py` (`QwenSummarizerBackend`).
+- **`tests/test_qwen_summarizer.py`** — 25 tests: 24 model-free (message construction, backend adapter, lazy-import boundary, Protocol conformance) + 1 optional live test (self-skips when weights unavailable; PASSED on this M5 with cached weights).
+- **`docs/ml/slm-backend.md`** — SLM runtime doc (model choice, shared-loader design, summarize + detect_wall contracts).
+- **`mlx-lm>=0.31.3` promoted** from `slm-spike` group to real `[project.dependencies]` (same pattern as `mlx-whisper` at T-104).
+- **DECISIONS.md** — new entry for dep promotion + shared-loader design.
+
+**Shared-loader design (critical for T-203):**
+- `QwenModel` in `src/jarvis/ml/qwen.py` is the ONE model loader. It lazily calls `from mlx_lm import load, generate` on the first `generate()` call, then caches `(model, tokenizer)`.
+- `QwenSummarizerBackend(model)` takes it via injection.
+- T-203's `QwenWallBackend(model)` will reuse THE SAME `QwenModel` instance — **construct once at startup, inject into both**.
+- Chat template is applied inside `QwenModel.generate()` — callers just pass a message list.
+
+**→ T-203 (local wall-detection backend) is NEXT:**
+- Implement `QwenWallBackend` in `src/jarvis/ml/wall.py`.
+- Reuse the same `QwenModel` loader.
+- Return `WallVerdict` dataclass (parse model JSON; on failure return `WallVerdict.none()`).
+- DO NOT threshold confidence — that's SummonController policy.
+- **T-203 IS qa-tuning-gated** (wall behavior = the success metric). Submit for qa-tuning review before marking done.
+- Prompt design stub in `docs/ml/slm-backend.md` §wall-detection.
+- Then T-204 wires mock→local backend in the orchestrator.
+
+---
+
+## Prior state — 2026-06-15 (T-201 done → Qwen2.5 size frozen; Phase 2 active)
 
 **Phase:** phase_2 — Local understanding (ACTIVE). T-201 (Qwen2.5/MLX runtime spike + joint ASR coexistence budget) is **DONE** (local-ml-engineer, this session). Suite **182 green**, ruff clean. On `main`, not pushed.
 
