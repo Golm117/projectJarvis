@@ -54,8 +54,7 @@ def main(argv: list[str] | None = None) -> int:
         default=False,
         help="(--live) run continuously until Ctrl-C / SIGTERM — no time limit. "
         "Graceful shutdown: ticker thread joined, mic stopped, exit 0. "
-        "Memory is bounded (last %(const)s utterances retained).",
-        const="1000",  # just for the help text substitution above
+        "Memory is bounded (last 1000 utterances retained).",
     )
     parser.add_argument(
         "--say",
