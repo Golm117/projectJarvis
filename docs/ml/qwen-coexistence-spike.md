@@ -281,3 +281,68 @@ Budget: ~366 ms per call at warm inference.
 → **mlx-lm** must be promoted from the `slm-spike` uv group into real
 `[project.dependencies]` when T-202/T-203 implement the live backends (same
 pattern as mlx-whisper at T-104). Record in DECISIONS.md at T-202/T-203 time.
+
+---
+
+## T-509 — Model escalation 3B → 7B (2026-06-16)
+
+**Context:** T-508 was approved on clean single-line probes (e.g.
+`"Alice: What's the square root of 81?"` → rating 5). A live `--capture` run
+showed **0 Path-B candidates** on clear factual questions in the real pipeline.
+Root cause: the "GAP" framing in T-508 caused the 3B model to reason "it is a
+direct question from the group, therefore it is not a gap." The 7B model
+(WITHOUT the T-509 prompt fix) showed the same regression in the spike below.
+
+**Re-measurement (small.en + 7B, M5 Pro / 64 GB, 2026-06-16):**
+
+| Step | Median | Notes |
+|------|--------|-------|
+| ASR (small.en) | 103 ms | 5 warm runs; 585 ms on first (cold) |
+| 7B summarize | 693 ms | same QwenModel instance |
+| 7B detect_wall | 987 ms | 200 max_tokens (CoT + JSON) |
+| Joint total | **1791 ms** | median of 5 warm runs |
+| Min / Max | 1785 / 1847 ms | stable |
+| Margin vs 2000 ms | **+209 ms** | CLEARS — proceed |
+| Peak RSS | 5591 MB | vs 3B at 3199 MB |
+
+**Budget verdict: CLEARS.** Margin is +209 ms — tighter than 3B's +1225 ms but
+still within budget. 7B is now the default (`DEFAULT_MODEL_PATH` in `qwen.py`).
+
+**7B sample output WITHOUT T-509 prompt fix (from spike):**
+```json
+{
+  "reasoning": "Alice's question is a distraction from the latency issue and does not require an answer from Jarvis to resolve the current conversation.",
+  "rating": 2,
+  "category": "none",
+  "offer": ""
+}
+```
+This confirms the framing regression also affects 7B: the model sees a direct
+factual question as "not a gap" under the old T-508 framing. T-509 prompt fix
+is mandatory regardless of model size.
+
+**T-509 prompt-fix real-path validation results (6 scenarios, 3 runs, deterministic):**
+
+| Scenario | Expected | Result | Notes |
+|----------|----------|--------|-------|
+| A: sqrt81 in multi-line context | fire (≥4) | PASS — rating 5 | direct unanswered question |
+| B: 4×7 in multi-line context | fire (≥4) | PASS — rating 5 | direct arithmetic question |
+| C: wh-form "I wonder what 10×4 is" | fire (≥3) | PASS — rating 5 | wh-form fires correctly |
+| D: WDYN after `[Jarvis engaged]` | no-fire | **FAIL — rating 5** | open qa issue (see below) |
+| E: self-musing about volume | no-fire | PASS — rating 1 | resolved by multi-line exemplar |
+| F: plain statement/plan | no-fire | PASS — rating 1 | stable |
+
+**Open qa issue — Scenario D (WDYN after summon):** The model consistently rates
+"What do you need?" (after `[Jarvis engaged]` in the transcript) as an
+unanswered_question at rating 5. The exemplar now exactly mirrors this structure
+but the 7B model still fires. Root cause analysis: `[Jarvis engaged]` is an
+annotation marker, not a speaker turn, and the model treats the subsequent
+"What do you need?" as a group-directed question. Two possible fixes outside
+local-ml-engineer scope: (1) `core-engineer` could suppress `detect_wall` calls
+while Jarvis is in engaged state — the `AttentionLayer` knows when Jarvis is
+active; (2) further prompt engineering to treat bracketed system annotations as
+conversation-state context. Flagged for qa-tuning evaluation.
+
+**3B selectable:** pass `model_path="mlx-community/Qwen2.5-3B-Instruct-4bit"` to
+`QwenModel()`. The 3B has +1225 ms budget margin but the framing regression
+affects it equally.

@@ -21,10 +21,14 @@ from typing import Any
 # Defaults (frozen by T-201 spike — DECISIONS.md 2026-06-15)
 # ---------------------------------------------------------------------------
 
-#: The MLX-community repo chosen by the T-201 spike.  Do NOT change without a
-#: new spike (7B-Instruct-4bit is the documented escalation path if 3B precision
-#: proves insufficient after T-203 prompt work).
-DEFAULT_MODEL_PATH = "mlx-community/Qwen2.5-3B-Instruct-4bit"
+#: The MLX-community repo.  Switched from 3B → 7B in T-509 after the T-508 gate
+#: was found to be insufficient (T-508 qa-approved on clean single-line probes, but
+#: live capture showed 0 Path-B candidates on factual questions in the real
+#: ``detect_wall(rolling-window-transcript, summary)`` path).  7B budget measured
+#: on this M5 Pro: joint pipeline 1791 ms median (+209 ms margin vs 2000 ms budget,
+#: see ``docs/ml/qwen-coexistence-spike.md`` §T-509).  3B remains selectable by
+#: passing ``model_path="mlx-community/Qwen2.5-3B-Instruct-4bit"``.
+DEFAULT_MODEL_PATH = "mlx-community/Qwen2.5-7B-Instruct-4bit"
 
 #: The maximum tokens the loader passes to ``mlx_lm.generate`` when no explicit
 #: ``max_tokens`` is given.  Callers (summarizer, wall backend) always supply
@@ -58,6 +62,8 @@ class QwenModel:
         self._model: Any | None = None
         self._tokenizer: Any | None = None
         self._generate_fn: Any | None = None  # mlx_lm.generate callable
+        # T-509: default is now 7B.  If an explicit path is given (e.g. "3B")
+        # that overrides the default — the injected-backend discipline is unchanged.
 
     # ------------------------------------------------------------------
     # Internal loader

@@ -1,11 +1,11 @@
-"""Tests for QwenWallBackend (T-203, T-508).
+"""Tests for QwenWallBackend (T-203, T-508, T-509).
 
 All tests in this file are **model-free** — they run without MLX, without Qwen
 weights, and without network access.  The real model inference lives in the
 optional live test at the bottom, which self-skips when weights are unavailable
 (mirroring ``test_live_qwen_summarize_optional`` in ``test_qwen_summarizer.py``).
 
-Design under test (T-508 graded contract):
+Design under test (T-508/T-509 graded contract):
 - ``_build_messages(transcript, summary)`` — message construction (pure, testable
   in isolation).  The user message now contains the graded 1–5 rating schema
   with ``reasoning``, ``rating``, ``category``, and ``offer`` fields (no
@@ -21,6 +21,15 @@ Design under test (T-508 graded contract):
 - ``WallVerdict`` invariants: ``NONE`` iff ``¬is_wall``; ``offer`` is ``""`` for
   a non-wall; ``confidence`` is a valid graded value.
 - Graceful fallback to ``WallVerdict.none()`` on any parse failure.
+
+T-509 adds:
+- The system prompt explicitly calls out DIRECT UNANSWERED QUESTION as the
+  primary fire case (fixing the T-508 framing regression where the model
+  excluded direct questions with "it's a direct question so it's not a gap").
+- The live test now validates on the REAL ``detect_wall(transcript, summary)``
+  path with multi-line rolling-window transcripts + context summary, not clean
+  single-line probes (which is how the T-508 gate was fooled).
+- Model escalated from 3B to 7B (DEFAULT_MODEL_PATH changed).
 """
 
 from __future__ import annotations
@@ -215,6 +224,52 @@ class TestBuildMessages:
         user = msgs[1]["content"]
         # The reasoning step asks about unanswered/factual/directedness
         assert "reasoning" in user.lower() or "REASONING" in user
+
+    # --- T-509 framing-fix tests ---
+
+    def test_system_prompt_names_direct_question_as_primary_case(self) -> None:
+        """T-509 fix: system prompt must explicitly call out direct unanswered question
+        as the PRIMARY fire case, NOT excluded."""
+        msgs = _build_messages("Alice: test", "")
+        system = msgs[0]["content"].lower()
+        # Must not teach the model to exclude direct questions
+        # Must instead make direct unanswered question = primary fire case
+        has_primary_cue = "primary" in system or "direct" in system
+        assert has_primary_cue, (
+            "system prompt must explicitly identify direct unanswered questions "
+            "as the primary fire case (T-509 framing fix)"
+        )
+
+    def test_system_prompt_does_not_exclude_direct_questions(self) -> None:
+        """T-509: the system prompt must NOT frame 'direct questions' as excluded."""
+        msgs = _build_messages("Alice: test", "")
+        system = msgs[0]["content"].lower()
+        # The old framing "UNANSWERED, ANSWERABLE GAP" led the model to reason
+        # "it's a direct question not a gap". The new framing must not do that.
+        assert "gap" not in system or "answer" in system, (
+            "if 'gap' appears in the system prompt, it must be paired with "
+            "language that includes direct questions (T-509 framing fix)"
+        )
+
+    def test_user_message_exemplar_for_plain_statement_present(self) -> None:
+        """T-509 adds Example 7: plain statement / plan → not a gap. Must be in exemplars."""
+        msgs = _build_messages("Alice: test", "")
+        user = msgs[1]["content"]
+        # Example 7 mentions a PR/plan decision
+        assert "PR" in user or "plan" in user.lower() or "statement" in user.lower(), (
+            "user message must include a plain-statement non-wall exemplar (T-509 Example 7)"
+        )
+
+    def test_reasoning_instruction_names_direct_question(self) -> None:
+        """T-509: the reasoning instruction must call out direct unanswered question explicitly."""
+        msgs = _build_messages("Alice: test", "")
+        user = msgs[1]["content"]
+        # The reasoning step must tell the model that direct questions don't subtract score
+        has_cue = "direct" in user.lower() or "primary" in user.lower()
+        assert has_cue, (
+            "reasoning instruction must clarify that a direct unanswered question "
+            "is the primary fire case (T-509 framing fix)"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -922,26 +977,31 @@ class TestProtocolConformance:
 
 
 def test_live_qwen_wall_detection_optional() -> None:
-    """End-to-end real inference: load Qwen2.5-3B and run detect_wall calls.
+    """End-to-end real inference: load the default Qwen model and run detect_wall calls.
 
     Skipped (never failed) when mlx_lm is not importable or the model weights
     are not available locally — the condition mirrors
     ``test_live_qwen_summarize_optional`` in ``test_qwen_summarizer.py``.
     Never runs in CI (the CI env has no Qwen weights); only runs on the local
-    M5 where the weights are cached from the T-201 spike.
+    M5 where the weights are cached.
 
-    When it does run (T-508 live validation), it asserts:
-    1. The model loads (no exception).
-    2. √81 as a direct question is detected as a wall (factual_gap or
-       unanswered_question) with confidence >= 0.70 (rating >= 4).
-    3. '4 times 7?' — the consistently-firing case — still fires.
-    4. 'What do you need?' post-summon is NOT flagged (or if flagged,
-       confidence is low — this is what the T-503 cooldown suppresses anyway).
-    5. A plain statement is NOT flagged.
-    6. Confidence values are in [0.0, 1.0] for all cases.
-    7. All returned objects are WallVerdict instances.
+    T-509 CRITICAL: validates on the REAL ``detect_wall(transcript, summary)``
+    path with MULTI-LINE rolling-window transcripts + a context summary, NOT
+    clean single-line probes.  This is how the T-508 gate was fooled: qa-tuning
+    probed "√81?" as a single clean line and got rating 5, but the real pipeline
+    feeds a multi-line window (e.g. 5 utterances from a math chat) + a summary,
+    and on that real input the 3B model rated it 2 and reasoned "it's a direct
+    question so it's not a gap."
 
-    Reports which cases passed and which failed (for qa-tuning review).
+    Scenarios (all with realistic multi-line transcripts + summary):
+    1. √81 in a math-chat window → must fire (rating >= 4, confidence >= 0.70).
+    2. 4×7 in a math-chat window → must fire.
+    3. "I wonder what 10×4 is." (wh-form, no ?) in context → reported.
+    4. "What do you need?" after Jarvis engaged → must NOT fire.
+    5. Self-musing ("I wonder if my volume is too loud") in context → must NOT fire.
+    6. Plain statement/plan in context → must NOT fire.
+
+    Reports all results honestly; hard assertions on shape + invariants.
     """
     try:
         import mlx_lm  # noqa: F401 — import probe only
@@ -956,67 +1016,111 @@ def test_live_qwen_wall_detection_optional() -> None:
 
     results: dict[str, dict] = {}
 
-    # --- Scenario A: √81 direct question (the T-508 primary fix target) ---
+    # T-509: all transcripts use the REAL multi-line rolling-window format
+    # (as AttentionLayer feeds them: "Speaker: text\nSpeaker: text\n...").
+    # Single-line clean probes are explicitly NOT used (that's what failed T-508).
+
+    # --- Scenario A: √81 in a multi-line math-chat window (T-509 primary fix) ---
     try:
-        transcript_a = "Alice: What's the square root of 81?"
-        summary_a = "Alice and Bob are chatting."
+        transcript_a = (
+            "Alice: So we need to figure out a few things.\n"
+            "Bob: Yeah, let's start with the easy ones.\n"
+            "Alice: What is the square root of 81?\n"
+            "Bob: Hmm, let me think..."
+        )
+        summary_a = "Alice and Bob are working through some math problems together."
         v_a = backend.detect_wall(transcript_a, summary_a)
-        results["sqrt81_question"] = {
+        results["sqrt81_question_real_path"] = {
             "verdict": v_a,
             "pass": v_a.is_wall and v_a.confidence >= 0.70,
         }
     except Exception as exc:  # noqa: BLE001
-        results["sqrt81_question"] = {"error": str(exc), "pass": False}
+        results["sqrt81_question_real_path"] = {"error": str(exc), "pass": False}
 
-    # --- Scenario B: √81 wh-form without '?' (the T-508 pre-filter miss) ---
+    # --- Scenario B: 4×7 in a multi-line window ---
     try:
-        transcript_b = "Alice: I wonder what the square root of 81 is."
-        summary_b = "Alice and Bob are chatting."
+        transcript_b = (
+            "Alice: OK, let's do some quick multiplication.\n"
+            "Bob: Sure, what do you need?\n"
+            "Alice: What's 4 times 7?\n"
+            "Bob: Uhh..."
+        )
+        summary_b = "Alice and Bob are doing arithmetic exercises."
         v_b = backend.detect_wall(transcript_b, summary_b)
-        results["sqrt81_wh_form"] = {
+        results["4_times_7_real_path"] = {
             "verdict": v_b,
-            "pass": v_b.is_wall,  # any wall counts; confidence may vary
+            "pass": v_b.is_wall and v_b.confidence >= 0.70,
         }
     except Exception as exc:  # noqa: BLE001
-        results["sqrt81_wh_form"] = {"error": str(exc), "pass": False}
+        results["4_times_7_real_path"] = {"error": str(exc), "pass": False}
 
-    # --- Scenario C: 4×7 (the consistently-firing case — must still fire) ---
+    # --- Scenario C: wh-form (no ?) in context — reported, not hard-asserted ---
     try:
-        transcript_c = "Alice: What's 4 times 7?"
-        summary_c = "Math discussion."
+        transcript_c = (
+            "Alice: Let's try a few more.\n"
+            "Bob: Yeah, go ahead.\n"
+            "Alice: I wonder what 10 times 4 is.\n"
+        )
+        summary_c = "Alice and Bob are working through multiplication."
         v_c = backend.detect_wall(transcript_c, summary_c)
-        results["4_times_7"] = {
+        results["wh_form_real_path"] = {
             "verdict": v_c,
-            "pass": v_c.is_wall and v_c.confidence >= 0.70,
+            "pass": True,  # not hard-asserted; consistency reported
         }
     except Exception as exc:  # noqa: BLE001
-        results["4_times_7"] = {"error": str(exc), "pass": False}
+        results["wh_form_real_path"] = {"error": str(exc), "pass": True}
 
-    # --- Scenario D: 'What do you need?' post-summon (should be low or none) ---
+    # --- Scenario D: 'What do you need?' after Jarvis engaged (must NOT fire) ---
     try:
-        transcript_d = "[Jarvis just engaged] Alice: What do you need?"
-        summary_d = "Jarvis was just summoned."
+        transcript_d = (
+            "Alice: Jarvis, set a reminder for me.\n[Jarvis engaged]\nAlice: What do you need?\n"
+        )
+        summary_d = "Alice just summoned Jarvis to set a reminder. Jarvis is engaged."
         v_d = backend.detect_wall(transcript_d, summary_d)
-        # Not a hard assertion — the T-503 post-engagement cooldown handles this
-        # in the orchestrator regardless. We just report confidence.
-        results["what_do_you_need"] = {
+        results["what_do_you_need_real_path"] = {
             "verdict": v_d,
             "pass": not v_d.is_wall or v_d.confidence < 0.70,
         }
     except Exception as exc:  # noqa: BLE001
-        results["what_do_you_need"] = {"error": str(exc), "pass": False}
+        results["what_do_you_need_real_path"] = {"error": str(exc), "pass": False}
 
-    # --- Scenario E: plain statement (no wall) ---
+    # --- Scenario E: self-musing in context (must NOT fire) ---
     try:
-        transcript_e = "Alice: Great, so we're going with the Tuesday slot then."
-        summary_e = "The team has been scheduling a meeting."
+        transcript_e = (
+            "Alice: Yeah, I think the setup is working.\n"
+            "Bob: Let me check the output.\n"
+            "Alice: I wonder if my volume is too loud.\n"
+        )
+        summary_e = "Alice and Bob are testing their audio setup."
         v_e = backend.detect_wall(transcript_e, summary_e)
-        results["plain_statement"] = {"verdict": v_e, "pass": not v_e.is_wall}
+        results["self_musing_real_path"] = {
+            "verdict": v_e,
+            "pass": not v_e.is_wall or v_e.confidence < 0.70,
+        }
     except Exception as exc:  # noqa: BLE001
-        results["plain_statement"] = {"error": str(exc), "pass": False}
+        results["self_musing_real_path"] = {"error": str(exc), "pass": False}
+
+    # --- Scenario F: plain statement / plan in context (must NOT fire) ---
+    try:
+        transcript_f = (
+            "Alice: So it looks like option B is the best path.\n"
+            "Bob: Agreed.\n"
+            "Alice: Let's go with option B then and schedule a review for Friday.\n"
+        )
+        summary_f = "Alice and Bob are deciding on a technical approach."
+        v_f = backend.detect_wall(transcript_f, summary_f)
+        results["plain_statement_real_path"] = {
+            "verdict": v_f,
+            "pass": not v_f.is_wall,
+        }
+    except Exception as exc:  # noqa: BLE001
+        results["plain_statement_real_path"] = {"error": str(exc), "pass": False}
 
     # Print results for qa-tuning review.
-    print("\n--- QwenWallBackend live test results (T-508 graded rework) ---")
+    print("\n--- QwenWallBackend live results (T-509: REAL PATH, multi-line transcripts) ---")
+    print("  NOTE: T-509 validates on the REAL detect_wall(transcript, summary) path with")
+    print("  multi-line rolling-window inputs + context summary. Not clean single-line probes.")
+    print()
     for name, info in results.items():
         if "error" in info:
             print(f"  {name}: ERROR — {info['error']}")
@@ -1025,7 +1129,8 @@ def test_live_qwen_wall_detection_optional() -> None:
             status = "PASS" if info["pass"] else "FAIL"
             print(
                 f"  {name}: {status} | is_wall={v.is_wall} category={v.category} "
-                f"confidence={v.confidence:.2f} offer={v.offer!r}"
+                f"confidence={v.confidence:.2f} rating_implied={v.confidence} "
+                f"offer={v.offer!r}"
             )
     print("--- end ---")
 

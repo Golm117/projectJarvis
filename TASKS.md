@@ -943,7 +943,7 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
   - **Two items surfaced to orchestrator/human (neither blocks):** (1) the floor *value* — keep 0.70 vs lower to 0.65 — is a user-visible threshold decision (recommend keep). (2) wh-form rating-3 recall is a v1 prompt lever, not a 7B/fine-tune decision.
 
 ### T-509 — Escalate local brain to Qwen2.5-7B + fix prompt-framing regression in wall detector
-- **Status:** claimed
+- **Status:** review
 - **Priority:** P0
 - **Role:** local-ml-engineer
 - **Owner:** local-ml-engineer
@@ -967,4 +967,10 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
   - Do NOT mark `done`.
 - **Progress:**
   - 2026-06-16T23:30:00Z — claimed; all orientation files read; baseline 523 green confirmed.
-- **Notes:** qa-GATED. Route to qa-tuning before marking done. T-508's `done` rested on a flawed gate (clean single-line probes ≠ real `detect_wall` path). T-509 supersedes the 3B prompt for production use. DECISIONS.md entry required for 7B model switch.
+  - 2026-06-16 — STEP 1 DONE: 7B budget measured: joint 1791 ms median (+209 ms vs 2000 ms budget). CLEARS.
+  - 2026-06-16 — STEP 2 DONE: DEFAULT_MODEL_PATH changed to 7B in `qwen.py`.
+  - 2026-06-16 — STEP 3 DONE: `_SYSTEM_PROMPT`, exemplars (7 examples, multi-line format), and reasoning instruction all reframed. Direct unanswered question = PRIMARY fire case. Exemplars D/E updated to multi-line format after initial live validation showed E was still firing (now fixed).
+  - 2026-06-16 — STEP 4 DONE (partial): 6 scenarios, 3 runs each, deterministic. A/B/C all PASS (fire). E/F PASS (no-fire). D FAILS (WDYN after summon — open qa issue, see notes). No live `--capture` run completed (STEP 4b deferred to qa-tuning, who must run with a real environment).
+  - 2026-06-16 — Tests: 527 passed (+4 new model-free framing tests). ruff check + format clean.
+  - 2026-06-16 — Docs: `qwen-coexistence-spike.md` §T-509 added. `DECISIONS.md` entry written.
+- **Notes:** qa-GATED. Route to qa-tuning before marking done. CRITICAL: qa must validate on the REAL `detect_wall(transcript, summary)` path with multi-line rolling-window transcripts — NOT clean single-line probes (which is how T-508's gate was fooled). **Open precision failure — Scenario D (WDYN after summon):** the 7B model consistently rates "What do you need?" (with `[Jarvis engaged]` in the transcript) as unanswered_question rating 5. The exemplar now mirrors this exactly but the model fires anyway. Possible fix: `core-engineer` to suppress `detect_wall` calls while Jarvis is in engaged/active state (the `AttentionLayer` already knows this state). Flag this to core-engineer as a parallel investigation. STEP 4b (live `--capture` run) also deferred — qa-tuning should run with real audio: `~/.local/bin/uv run python -m jarvis --live --local-brain --device 6 --capture /tmp/t509.json --seconds 60`, speak factual questions like "What's the square root of 81?" and "What's 4 times 7?", and report candidates + verdicts from the capture file.

@@ -18,6 +18,17 @@ Keep entries short. One paragraph per field is plenty. If it takes more, it prob
 
 ---
 
+## 2026-06-16 — SLM escalated from Qwen2.5-3B to 7B; wall-detector prompt reframed (T-509)
+
+**Decided by:** local-ml-engineer (Claude Code)
+**Status:** accepted
+**Context:** Live `--capture` run showed 0 Path-B candidates on clear factual questions. Root cause: the "GAP" framing from T-508 caused both 3B and 7B models to reason "it is a direct question from the group, therefore it is not a gap" — excluding the PRIMARY fire case. Additionally, T-508 was qa-approved on clean single-line probes; in the real `detect_wall(rolling-window-transcript, summary)` path with multi-line context, the model's reasoning differs.
+**Decision:** (1) Switch `DEFAULT_MODEL_PATH` from 3B → 7B in `qwen.py`. (2) Reframe the `_SYSTEM_PROMPT` in `wall.py`: the task is now "score whether there is something Jarvis could helpfully answer right now that no one present has resolved" — explicitly naming a DIRECT UNANSWERED QUESTION as THE PRIMARY FIRE CASE. (3) Update exemplars to multi-line format matching real production input. (4) Add explicit exemplar for plain-statement non-wall. All T-509 validation must use multi-line rolling-window transcripts, not clean single-line probes. Marked `review` with qa brief requiring real-path validation.
+**Rationale:** 7B budget clears on M5 Pro: 1791 ms joint median vs 2000 ms limit (+209 ms). The framing fix resolves the direct-question exclusion bug on all three fire-case scenarios (sqrt81, 4×7, wh-form) with deterministic results across 3 runs. One open precision failure remains (WDYN after summon — Jarvis-directed question), flagged for qa-tuning; partial fix may require `core-engineer` to suppress `detect_wall` during active engagement rather than relying solely on the prompt.
+**Alternatives considered:** (1) Keeping 3B with prompt fix only — rejected because the live evidence showed 3B mis-rated even with the T-508 exemplars; 7B shows better instruction-following. (2) Fixing the WDYN case in the prompt only — attempted; the `[Jarvis engaged]` marker is an annotation, not a speaker turn, and the 7B model consistently ignores it. Flagged as open qa issue for possible `core-engineer` suppression during engaged state.
+
+---
+
 ## 2026-06-16 — Post-engagement cooldown finalized at 6.0 s (human sign-off) — supersedes the 8.0 s default (T-503)
 
 **Decided by:** human (sign-off) — after the orchestrator's eval sweep + core-engineer's independent review (APPROVED)

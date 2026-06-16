@@ -1,4 +1,4 @@
-"""``QwenWallBackend`` — the real ``WallBackend`` on Qwen2.5/MLX (T-203, T-508).
+"""``QwenWallBackend`` — the real ``WallBackend`` on Qwen2.5/MLX (T-203, T-508, T-509).
 
 This is the Phase-2 fill of the frozen ``WallBackend`` seam declared in
 :mod:`jarvis.core.wall_detector`.  It replaces the ``HeuristicWallBackend``
@@ -25,6 +25,21 @@ Design decisions (``docs/ml/working-notes.md`` + ``docs/ml/slm-backend.md``
   because every fire landed at ~0.95).  ``is_wall`` is derived from
   ``rating >= 3``.  The ``WallVerdict`` shape is FROZEN — this change is
   entirely within the prompt and the parse logic.
+* **Prompt-framing fix (T-509).** T-508's "GAP" framing caused a regression:
+  the 3B model reasoned "it is a direct question from the group, therefore it
+  is not a gap" — excluding the PRIMARY fire case.  T-509 reframes: the task
+  is to score whether there is *something Jarvis could helpfully answer right
+  now that no one present has resolved*.  A DIRECT UNANSWERED QUESTION is
+  explicitly the primary fire case, not an exclusion reason.  The system
+  prompt, exemplars, and reasoning instruction all make this explicit.  Also
+  adds an explicit exemplar (Example 7) for a plain-statement non-wall.
+* **Model escalated to 7B (T-509).** Switched from
+  ``mlx-community/Qwen2.5-3B-Instruct-4bit`` to
+  ``mlx-community/Qwen2.5-7B-Instruct-4bit``.  Joint budget re-measured on
+  the M5 Pro: 1791 ms median (ASR 103 ms + summarize 693 ms + detect_wall
+  987 ms) vs 2000 ms budget → +209 ms margin.  3B remains selectable by
+  overriding ``QwenModel(model_path=...)``.  See
+  ``docs/ml/qwen-coexistence-spike.md`` §T-509 for the full measurement.
 * **Information-Gap CoT (T-508).** A compact structured reasoning step
   precedes the rating: the model briefly reasons about (a) whether there is
   an unanswered question/expressed uncertainty, (b) whether it is
@@ -108,15 +123,21 @@ _WALL_RATING_THRESHOLD = 3
 
 _SYSTEM_PROMPT = (
     "You are a precision-first interjection gatekeeper for an ambient AI assistant. "
-    "Your job: score how clearly the conversation shows an UNANSWERED, ANSWERABLE GAP "
-    "that Jarvis could briefly help with. "
+    "Your job: score how clearly there is something Jarvis could helpfully answer right now "
+    "that no one present has resolved. "
+    "THE PRIMARY FIRE CASE is a direct, unanswered factual question from the group — "
+    "someone asks a question out loud, nobody answers it, and Jarvis could. Rate this HIGH (4-5). "
+    "Also high: someone states they don't know/can't recall a fact; the group is stuck on a "
+    "factual point; someone expresses a wish for information they lack. "
     "A false interjection (firing when not needed) is costly — it interrupts a conversation. "
     "A miss (staying silent on a real gap) is cheap — the conversation continues. "
-    "So: err on the side of silence. Only score high when you are confident there is "
-    "a genuine, answerable, group-directed gap. "
+    "So: err on the side of silence. Only score high when you are confident "
+    "someone present needs an answer that Jarvis can supply. "
     "Statements, decisions, plans, and self-directed musings are NOT gaps. "
     "Questions or remarks directed at Jarvis (e.g. just after a wake-word summon) are NOT gaps. "
     "Rhetorical questions and thinking-aloud are NOT gaps. "
+    "DO NOT penalize a question for being 'direct' — a direct unanswered question is "
+    "EXACTLY what Jarvis is here for. "
     "Reply with ONLY a JSON object — no prose, no markdown fences."
 )
 
@@ -127,43 +148,55 @@ _SYSTEM_PROMPT = (
 _EXEMPLARS = (
     "EXAMPLES (study these before scoring):\n"
     "\n"
-    "Example 1 — clear factual question to the group:\n"
-    '  Transcript: "Alice: What\'s the square root of 81?"\n'
-    '  → {"reasoning": "A direct, specific factual question nobody answered.'
-    ' Answerable and group-directed.",'
+    "Example 1 — direct factual question to the group (PRIMARY fire case):\n"
+    '  Transcript: "Alice: Bob, do you know what the square root of 81 is?\\nBob: Hmm, not sure."\n'
+    '  → {"reasoning": "Alice asked a direct factual question. Nobody answered.'
+    ' This is the primary case Jarvis exists for. Direct + unanswered + group-directed = rate 5.",'
     ' "rating": 5, "category": "unanswered_question",'
-    ' "offer": "That\'s 9 — want me to confirm?"}\n'
+    ' "offer": "That\'s 9."}\n'
     "\n"
-    "Example 2 — wh-form gap phrasing (no question mark):\n"
+    "Example 2 — direct factual question, no prior context needed:\n"
+    '  Transcript: "Alice: What\'s 4 times 7?"\n'
+    '  → {"reasoning": "Direct arithmetic question, nobody answered. Jarvis can answer this.'
+    ' A direct unanswered question is exactly the primary fire case — rate 5.",'
+    ' "rating": 5, "category": "unanswered_question", "offer": "That\'s 28."}\n'
+    "\n"
+    "Example 3 — wh-form gap phrasing (no question mark):\n"
     '  Transcript: "Alice: I wonder what the square root of 81 is."\n'
-    '  → {"reasoning": "Expressed uncertainty about a specific fact.'
-    " Answerable and group-directed even without '?'.\","
+    '  → {"reasoning": "Alice expressed uncertainty about a specific fact.'
+    " Answerable and group-directed even without '?'. Strong candidate.\","
     ' "rating": 4, "category": "factual_gap",'
     ' "offer": "The square root of 81 is 9, if that helps."}\n'
     "\n"
-    "Example 3 — arithmetic question (consistent with Example 1):\n"
-    '  Transcript: "Alice: What\'s 4 times 7?"\n'
-    '  → {"reasoning": "Direct arithmetic question nobody answered. Answerable.",'
-    ' "rating": 5, "category": "unanswered_question", "offer": "That\'s 28."}\n'
-    "\n"
     "Example 4 — question directed at Jarvis after a summon (NOT a gap):\n"
-    '  Transcript: "[Jarvis just engaged] Alice: What do you need?"\n'
-    '  → {"reasoning": "Alice is speaking TO Jarvis, not hitting a wall'
-    ' between humans. Not an ambient gap.",'
+    '  Transcript: "Alice: Jarvis, help me with something.\\n'
+    '[Jarvis engaged]\\nAlice: What do you need?"\n'
+    '  → {"reasoning": "Alice summoned Jarvis and is now talking TO Jarvis.'
+    " [Jarvis engaged] confirms Jarvis is active. 'What do you need?' is Alice"
+    ' addressing Jarvis, not an open group question. This is a dialogue WITH Jarvis.",'
     ' "rating": 1, "category": "none", "offer": ""}\n'
     "\n"
-    "Example 5 — self-musing about own situation (NOT a gap):\n"
-    '  Transcript: "Alice: I wonder if my volume is too loud."\n'
-    '  → {"reasoning": "Alice is musing to herself about her own subjective'
-    ' situation. Not a factual gap Jarvis can answer. Not group-directed.",'
+    "Example 5 — self-musing about own subjective situation (NOT a gap):\n"
+    '  Transcript: "Alice: Yeah, I think the setup is working.\\n'
+    'Bob: Let me check the output.\\nAlice: I wonder if my volume is too loud."\n'
+    '  → {"reasoning": "Alice is wondering about her OWN subjective audio situation.'
+    " This is personal musing, not a factual question Jarvis can answer from"
+    " external knowledge. Jarvis has no way to measure Alice's volume."
+    ' Not group-directed and not resolvable by an AI assistant.",'
     ' "rating": 1, "category": "none", "offer": ""}\n'
     "\n"
     "Example 6 — declarative gap (no question mark, medium confidence):\n"
     '  Transcript: "Alice: I don\'t remember the date we picked."\n'
-    '  → {"reasoning": "Expressed uncertainty about a fact. Answerable but'
-    ' subtle — no explicit question. Moderate confidence.",'
+    '  → {"reasoning": "Alice expressed she doesn\'t know a fact. Answerable but'
+    ' no explicit question — moderate confidence.",'
     ' "rating": 3, "category": "factual_gap",'
     ' "offer": "I can check the date if you\'d like."}\n'
+    "\n"
+    "Example 7 — plain statement / plan (NOT a gap):\n"
+    '  Transcript: "Alice: Let\'s send the PR in 10 minutes."\n'
+    '  → {"reasoning": "This is a decision/plan, not a question or expressed gap.'
+    ' Nobody is asking for information.",'
+    ' "rating": 1, "category": "none", "offer": ""}\n'
 )
 
 _CATEGORY_DEFINITIONS = (
@@ -184,16 +217,21 @@ _CATEGORY_DEFINITIONS = (
 
 _REASONING_INSTRUCTION = (
     "REASONING STEP — before scoring, briefly answer:\n"
-    "1. Is there an unanswered question or expressed uncertainty?\n"
+    "1. Is there a direct unanswered question OR expressed uncertainty/gap?\n"
+    "   (A direct question nobody answered = PRIMARY fire case."
+    " Do NOT subtract for it being direct.)\n"
     "2. Is it factual/answerable by Jarvis?\n"
     "3. Is it directed at the GROUP (not at Jarvis, not at self, not rhetorical)?\n"
-    "4. Would a brief offer actually help?\n"
+    "4. Has anyone in the transcript already answered it?\n"
     "Then assign a RATING 1–5:\n"
-    "  5 = unambiguous gap, clearly answerable, group-directed\n"
-    "  4 = strong candidate with minor uncertainty\n"
+    "  5 = direct unanswered factual question from the group;"
+    " OR unambiguous factual gap, clearly answerable\n"
+    "  4 = strong candidate — clear need but slight uncertainty"
+    " (wh-form, no explicit question mark)\n"
     "  3 = plausible gap but weak/indirect signal\n"
     "  2 = probably not a gap (leaning no)\n"
-    "  1 = clearly not a gap (self-directed, rhetorical, Jarvis-directed, statement)"
+    "  1 = not a gap (self-directed, rhetorical, Jarvis-directed,"
+    " statement, plan, decision)"
 )
 
 _JSON_SCHEMA_LINE = (

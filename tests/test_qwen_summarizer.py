@@ -219,8 +219,11 @@ class TestQwenModelLazyImport:
         assert model._model_path == custom_path
 
     def test_qwen_model_default_path(self) -> None:
+        # T-509: default escalated from 3B → 7B (measured on M5 Pro: 1791 ms
+        # joint pipeline, +209 ms margin vs 2000 ms budget).
         model = QwenModel()
-        assert "Qwen2.5-3B" in model._model_path
+        assert "Qwen2.5" in model._model_path
+        assert "7B" in model._model_path  # T-509: 7B is now the default
         assert "4bit" in model._model_path.lower() or "4bit" in model._model_path
 
 
@@ -261,7 +264,7 @@ def test_backend_is_structurally_a_summarizer_backend() -> None:
 
 
 def test_live_qwen_summarize_optional() -> None:
-    """End-to-end real inference: load Qwen2.5-3B and run a summarize call.
+    """End-to-end real inference: load Qwen2.5-7B (T-509 default) and run a summarize call.
 
     Skipped (never failed) when mlx_lm is not importable or the model weights
     are not available locally — the condition mirrors

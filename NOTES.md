@@ -17,9 +17,24 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-16 (T-508 DONE → qa-tuning gate APPROVED)
+## Current state — 2026-06-16 (T-509 in REVIEW → escalated to Qwen2.5-7B, real-path regression fixed)
 
-**Phase:** phase_5 field-fix. T-508 (graded interjection-detection rework) is **DONE** — qa-tuning gate **APPROVED**. Suite **523 green**, ruff clean. On `main`, NOT pushed.
+**Phase:** phase_5 field-fix. T-509 (escalate local brain to Qwen2.5-7B + fix the T-508 prompt-framing regression) is in **`review`** (local-ml-engineer; the agent was killed at the final commit step — the orchestrator committed the work + finished the bookkeeping). Suite **527 green**, ruff clean. On `main`, NOT pushed.
+
+**Why T-509 happened:** a live `--capture` run exposed that the T-508 graded backend fired on NOTHING (0 Path-B candidates). Orchestrator reproduced via the REAL `detect_wall` path: the T-508 "GAP" framing made the 3B reason direct questions away ("answerable, but not a gap as it is a direct question"). **T-508's qa-gate was flawed** — it validated on clean single-line probes, not the real `detect_wall(rolling-window, summary)` path. Human chose 7B escalation.
+
+**T-509 results:**
+- **7B joint budget: 1791 ms median** (small.en ASR + 7B summarize + 7B detect_wall) — **clears the 2 s offer budget** (~209 ms margin). `DEFAULT_MODEL_PATH = mlx-community/Qwen2.5-7B-Instruct-4bit` (3B still selectable; one shared instance feeds both backends).
+- **Prompt framing fixed** — direct unanswered/factual questions are now the PRIMARY fire case. Validated on the REAL multi-line `detect_wall` path (3 runs each): √81 / 4×7 / direct factual questions → **fire**; self-musing / plain statement → **no-fire**.
+- **Open precision item — Scenario D:** "What do you need?" right after a summon still rates rating-5 in *isolated* detector tests. **Likely already handled in the real pipeline by the T-503 post-engagement cooldown** (6 s) — the isolated test bypasses the orchestrator. qa-tuning to confirm on the real path + a live capture.
+
+**→ qa-tuning gate (T-509):** validate on the REAL `detect_wall(transcript, summary)` path with multi-line rolling-window transcripts + a live `--capture` run — NOT clean single-line probes (that's how T-508's gate was fooled). Confirm √81-in-window fires, WDYN-post-summon is suppressed by the cooldown in the full pipeline, and the 0.70 floor suits the 7B confidence distribution. STEP 4b live capture: `~/.local/bin/uv run python -m jarvis --live --local-brain --device 6 --capture /tmp/t509.json --seconds 60`.
+
+---
+
+## Prior state — 2026-06-16 (T-508 DONE → qa-tuning gate APPROVED, later found flawed)
+
+**Phase:** phase_5 field-fix. T-508 (graded interjection-detection rework) is **DONE** — qa-tuning gate **APPROVED** (later shown flawed: validated on clean probes, not the real path; see T-509). Suite **523 green**, ruff clean. On `main`, NOT pushed.
 
 **qa-tuning verdict (full record: `docs/qa/threshold-tuning.md` §7; TASKS.md T-508 Notes):**
 - **Implementation sound.** Diff confined to `ml/wall.py` (prompt+parse) + `attention_layer.py` (pre-filter). Frozen `WallVerdict` intact; `SummonController`/`TurnTakingGate`/`WallDetector`/`types.py` **byte-for-byte unchanged**. 100 model-free tests assert external behavior. Graceful fallback intact.
