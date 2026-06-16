@@ -16,8 +16,9 @@ Phase 1 builds it bottom-up:
   synthetic frames with **no real hardware**.
 * **T-103:** Silero VAD consuming ``AudioSource`` frames, emitting
   ``on_speech_start`` / ``on_speech_end`` edges onto the ``TurnTakingGate``.
-* **T-104:** ``MicSource`` — wires the VAD + ``mlx-whisper base.en`` into
-  ``Utterance`` events behind ``TranscriptSource``.
+* **T-104 (done):** ``MicSource`` — wires the VAD + ``mlx-whisper base.en`` into
+  ``Utterance`` events behind ``TranscriptSource`` (ASR behind the ``Transcriber``
+  seam so tests need no real model).
 
 The design constraint mirrors the core's: **no hidden global state, deps
 injected.** The capture loop is the one place real I/O (PortAudio) lives; the
@@ -26,6 +27,13 @@ injected.** The capture loop is the one place real I/O (PortAudio) lives; the
 
 from __future__ import annotations
 
+from jarvis.audio.mic_source import (
+    DEFAULT_MLX_WHISPER_REPO,
+    DEFAULT_SPEAKER,
+    MicSource,
+    MlxWhisperTranscriber,
+    Transcriber,
+)
 from jarvis.audio.source import (
     DEFAULT_FRAME_SAMPLES,
     DEFAULT_SAMPLE_RATE,
@@ -43,13 +51,18 @@ from jarvis.audio.vad import (
 
 __all__ = [
     "DEFAULT_FRAME_SAMPLES",
+    "DEFAULT_MLX_WHISPER_REPO",
     "DEFAULT_SAMPLE_RATE",
+    "DEFAULT_SPEAKER",
     "AudioFrame",
     "AudioSource",
     "EnergyFrameClassifier",
     "FakeAudioSource",
     "FrameClassifier",
+    "MicSource",
+    "MlxWhisperTranscriber",
     "RingBuffer",
     "SileroFrameClassifier",
     "SileroVad",
+    "Transcriber",
 ]

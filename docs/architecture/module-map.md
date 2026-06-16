@@ -389,7 +389,8 @@ clock (`clock_advance`) and the shared `TurnTakingGate`'s `on_speech_start`/
 
 | Seam | Direction | Core provides | Filled by |
 |---|---|---|---|
-| `TranscriptSource.utterances() -> Iterable[Utterance]` | in | `ScriptedSource` (dev/tests) | sensing-engineer → `MicSource` (mic → Silero VAD → ASR) |
+| `TranscriptSource.utterances() -> Iterable[Utterance]` | in | `ScriptedSource` (dev/tests) | sensing-engineer → **`MicSource`** ✅ (mic → Silero VAD → mlx-whisper, T-104) |
+| `Transcriber.transcribe(waveform, sample_rate) -> str` | in | — (ASR is live runtime) | sensing-engineer → `MlxWhisperTranscriber` ✅ (`base.en`, T-104); fake in tests |
 | `SummarizerBackend.summarize(...) -> str` | in | mock heuristic | local-ml-engineer → Qwen2.5/MLX |
 | `WallBackend.detect_wall(...) -> WallVerdict` | in | mock heuristic | local-ml-engineer → Qwen2.5/MLX structured output |
 | `EngagedResponder.respond(handoff) -> str` | out | fake (canned line) | voice-integration-engineer → Claude `claude-opus-4-8` |
@@ -409,8 +410,14 @@ is sensing-engineer's package (`src/jarvis/audio/`), built bottom-up in Phase 1.
 
 ```
 mic ──► AudioSource ──► SileroVad ──► TurnTakingGate edges (on_speech_start/end)
-   (T-102 SoundDeviceMicSource)  (T-103)   └► segment frames ──► ASR (T-104) ──► Utterance ──► TranscriptSource
+   (T-102 SoundDeviceMicSource)  (T-103)   └► segment frames ──► Transcriber ──► Utterance ──► TranscriptSource
+                                              (T-104 MicSource: mlx-whisper base.en)
 ```
+
+**Phase 1 sensing path: COMPLETE** (T-102…T-105). `MicSource` (T-104) is the live
+fill of the frozen `TranscriptSource` seam — it drops into `AttentionLayer` with no
+change to the core, and the whole mic → VAD → ASR → `Utterance` path was live-tested
+end-to-end on the M5 (T-105).
 
 ### `AudioSource` (seam) + `AudioFrame` + `RingBuffer` + `FakeAudioSource` (T-102) · **done**
 The **audio-path analogue of the injected-backend discipline**: a `Protocol`
@@ -483,6 +490,44 @@ T-103 and passed.) `silero-vad`/torch recorded in DECISIONS.md.
 Feeds **T-104** (`MicSource`) the frames of each speech segment for ASR
 (`mlx-whisper base.en`), and stamps `Utterance.ts` from the VAD timeline.
 
+### `MicSource` (the live `TranscriptSource`) + `Transcriber` seam (T-104) · **done · frozen**
+The Phase-1 fill of the frozen `TranscriptSource` seam — it **replaces
+`ScriptedSource` with zero change to the core** (`AttentionLayer.run(mic_source)`).
+It ties the T-102 `AudioSource` and the T-103 `SileroVad` together and adds ASR:
+every frame flows through the VAD (driving the **shared `TurnTakingGate`** edges,
+exactly the edges `ScriptedSource` synthesized); `MicSource` watches those same
+edges to bracket each **speech segment**, accumulates its frames, and on the
+`speech_end` edge concatenates them and transcribes via the injected
+`Transcriber`. Non-empty text becomes an `Utterance(speaker, text, ts)`.
+```
+MicSource(source: AudioSource,
+          gate: TurnTakingGate | None = None,    # the SAME gate SummonController reads
+          transcriber: Transcriber | None = None,  # default = MlxWhisperTranscriber (lazy)
+          vad: SileroVad | None = None,             # default = fresh SileroVad bound to gate
+          speaker: str = DEFAULT_SPEAKER)           # fixed placeholder; diarization out of scope (v0)
+utterances() -> Iterable[Utterance]   # the TranscriptSource seam
+```
+- **`ts` from the VAD timeline, not a wall clock.** `Utterance.ts` = `frames_seen ×
+  frame_samples / sample_rate` — the audio position of the segment's *end*, derived
+  purely from the frame stream. **No `time.monotonic()`** anywhere in the live
+  source, so the "no hidden clock" invariant holds end-to-end. (The gate keeps its
+  own injected clock for the settle/politeness gaps; both timelines advance with the
+  same audio.) An open segment at end-of-stream is flushed so a final utterance
+  isn't lost.
+- **The `Transcriber` seam** (the audio-path analogue of `SummarizerBackend` /
+  `WallBackend` / `FrameClassifier`): `transcribe(waveform: np.ndarray, sample_rate:
+  int) -> str`. Default `MlxWhisperTranscriber` runs mlx-whisper `base.en` (the
+  T-101 choice; `mlx_whisper.transcribe(waveform, path_or_hf_repo=
+  "mlx-community/whisper-base.en-mlx")`), imported **lazily** so importing the
+  module never loads MLX. Tests inject a `FakeTranscriber` + `FakeAudioSource` +
+  `EnergyFrameClassifier`, so the whole segment→`Utterance` logic + gate-edge wiring
+  is exercised with **no mic and no model**. `mlx-whisper` promoted from the
+  `asr-spike` uv group into real `[project.dependencies]` (DECISIONS.md 2026-06-15).
+
+This is the last seam in the audio sensing path. **The Phase-1 sensing path is
+complete:** mic → VAD → ASR → `Utterance` runs end-to-end behind the frozen
+`TranscriptSource` seam (live-tested at T-105).
+
 ---
 
 ## Event flow (one utterance through the layer)
@@ -524,11 +569,12 @@ src/jarvis/
 │   ├── transcript_source.py   #   TranscriptSource Protocol + ScriptedSource (drives clock + gate)
 │   ├── backends.py            #   re-exports SummarizerBackend/WallBackend + HeuristicSummarizerBackend (+ HeuristicWallBackend)
 │   └── engaged.py             #   EngagedResponder / VoiceOutput Protocols + PrintResponder/PrintVoice stand-ins
-├── audio/                     # T-102+  ✅ T-102, T-103 done (sensing-engineer, Phase 1)
-│   ├── __init__.py            #   re-exports AudioSource/AudioFrame/RingBuffer/FakeAudioSource + SileroVad/FrameClassifier
+├── audio/                     # T-102+  ✅ T-102, T-103, T-104 done (sensing-engineer, Phase 1)
+│   ├── __init__.py            #   re-exports AudioSource/.../SileroVad/FrameClassifier/MicSource/Transcriber
 │   ├── source.py             #   AudioSource Protocol + AudioFrame + RingBuffer + FakeAudioSource  (T-102)
 │   ├── mic.py                #   SoundDeviceMicSource — real PortAudio always-on capture loop  (T-102)
-│   └── vad.py                #   SileroVad + FrameClassifier seam (SileroFrameClassifier/EnergyFrameClassifier)  (T-103)
+│   ├── vad.py                #   SileroVad + FrameClassifier seam (SileroFrameClassifier/EnergyFrameClassifier)  (T-103)
+│   └── mic_source.py         #   MicSource (TranscriptSource) + Transcriber seam (MlxWhisperTranscriber)  (T-104)
 └── attention_layer.py     # orchestrator  (T-008)  ✅ done
 ```
 

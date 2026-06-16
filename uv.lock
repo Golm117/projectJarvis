@@ -412,6 +412,7 @@ name = "jarvis"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [
+    { name = "mlx-whisper" },
     { name = "numpy" },
     { name = "silero-vad" },
     { name = "sounddevice" },
@@ -425,7 +426,6 @@ dev = [
 
 [package.dev-dependencies]
 asr-spike = [
-    { name = "mlx-whisper" },
     { name = "pywhispercpp" },
 ]
 dev = [
@@ -435,6 +435,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "mlx-whisper", specifier = ">=0.4.3" },
     { name = "numpy", specifier = ">=2.4.6" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
@@ -444,10 +445,7 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
-asr-spike = [
-    { name = "mlx-whisper", specifier = ">=0.4.3" },
-    { name = "pywhispercpp", specifier = ">=1.5.0" },
-]
+asr-spike = [{ name = "pywhispercpp", specifier = ">=1.5.0" }]
 dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.6" },

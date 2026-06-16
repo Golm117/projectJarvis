@@ -6,9 +6,12 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Proprietary" }
 authors = [{ name = "project-jarvis" }]
-# Runtime deps are added per-phase behind interfaces (anthropic, elevenlabs,
-# silero-vad, mlx, etc.). Phase 0 is pure-logic + mocks and has none.
+# Runtime deps for the always-on ambient half. `sounddevice` (capture, T-102),
+# `silero-vad`+`numpy` (VAD, T-103), `mlx-whisper` (ASR, T-104) — all shipped
+# runtime behind their seams. The cloud/SLM deps (anthropic, elevenlabs, mlx-lm)
+# arrive in their phases behind interfaces.
 dependencies = [
+    "mlx-whisper>=0.4.3",
     "numpy>=2.4.6",
     "silero-vad>=6.2.1",
     "sounddevice>=0.5.5",
@@ -29,8 +32,10 @@ packages = ["src/jarvis"]
 
 # --- uv: dependency groups (preferred workflow) -----------------------------
 [dependency-groups]
+# The T-101 ASR spike harness. `mlx-whisper` was promoted to real deps in T-104
+# (it's the shipped ASR runtime now); `pywhispercpp` stays here as the documented
+# fallback / benchmark dep only — it is not a shipped runtime dependency.
 asr-spike = [
-    "mlx-whisper>=0.4.3",
     "pywhispercpp>=1.5.0",
 ]
 dev = [
