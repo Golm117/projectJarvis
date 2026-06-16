@@ -515,14 +515,14 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 - **Notes:** DONE (not qa-gated — verify-only + adds tests, no logic change). **One-clock invariant HOLDS.** Silence-gap confirmed as T-302 integration point. Recommended T-302 hook: `AttentionLayer.tick()` calling cached `consider_interjection` during silence; threading isolated to `live.py`. Non-deterministic back-off finding noted: use cached verdict from ingest (not a fresh model call) so offer text is stable across ticks. No defects in qa-gated modules. **T-302 picks up** with the `tick()` design from `docs/architecture/phase3-invariants.md` §3.
 
 ### T-302 — Real-time SummonController — continuous Path-B re-evaluation during silence
-- **Status:** review
+- **Status:** done
 - **Priority:** P0
 - **Role:** core-engineer
 - **Owner:** core-engineer
 - **Phase:** 3
 - **Created:** 2026-06-15T00:00:00Z
 - **Claimed:** 2026-06-15T23:30:00Z
-- **Completed:**
+- **Completed:** 2026-06-15T23:59:00Z
 - **Depends on:** T-301 ✅
 - **Description:** Implement `AttentionLayer.tick()` + a background timer in `live.py` so Path-B interjections fire *mid-conversation during silence*, not only at utterance-ingest. The `MicSource.utterances()` generator blocks during silence — so `ingest` (and therefore `SummonController.consider_interjection`) is never called while the politeness gap opens. `tick()` is the pure re-evaluation hook that a daemon thread in `live.py` calls periodically (~150–250 ms cadence) to fire the interjection once the gap clears. Based on the design from `docs/architecture/phase3-invariants.md` §3.
 - **Acceptance:**
@@ -538,9 +538,15 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 - **Progress:**
   - 2026-06-15T23:30Z — claimed; orientation complete (T-301 design doc read).
   - 2026-06-15T23:59Z — implemented `_pending_wall` + `tick()` on `AttentionLayer`; replaced trailing re-check with daemon ticker thread + lock in `live.py`; 11 new deterministic tests; 281 green; ruff clean.
-- **Notes:** **→ qa-tuning: MANDATORY REVIEW.** This task changes live interjection-firing behavior — the project's success metric. Review brief below.
+- **Notes:** **qa-tuning: APPROVED (2026-06-15) — `review` → `done`. T-304 UNBLOCKED.** Suite 281 green, ruff clean; gated modules (TurnTakingGate/SummonController/WallDetector) confirmed byte-for-byte unchanged (diff empty). Full review in `docs/qa/working-notes.md` §"T-302 … APPROVED". This review folded in T-303's live validation.
 
-  **T-302 REVIEW BRIEF FOR QA-TUNING**
+  **qa-tuning approval note (the three brief deliverables):**
+  - **Double-fire fix — SOUND, the original T-204 live bug is FIXED.** Double guard: (a) `_pending_wall` cleared on first fire → all later ticks no-op (unconditional, offer-determinism-independent); (b) the *same* `WallVerdict` object re-evaluated each tick → stable `category::offer` signature → existing `SummonController` back-off de-dupes. `test_tick_fires_exactly_once_across_many_calls` pins guard (a) (20 ticks → 1 fire). That test's fake uses a fixed offer so it does not itself reproduce the non-determinism — I confirmed the real non-deterministic-offer de-dupe **live** with `--local-brain` (one fire, one Qwen offer). Fully validated.
+  - **Staleness policy — ACCEPTED (precision-safe for v0).** Replace-with-fresher-wall is precision-positive; fire-on-next-fresh-silence-after-abort is correct (the gap is genuinely open, the wall context is still live) — confirmed live. **One non-blocking watch-item flagged to T-503:** `_pending_wall` has no TTL / topic-shift clear, so a wall cached across many off-topic turns *could* fire late as a stale false interjection if the conversation has genuinely moved on. No evidence of misfire in the live runs; bounded in practice by replace-with-fresher + the cheap wall-signal pre-filter. Adding a TTL would be a SummonController/orchestrator-policy change (qa-gated) → flagged for the T-503 sweep (add a staleness fixture), not taken unilaterally.
+  - **Live-validation result (T-303, M5, BlackHole device 5, verbatim):** (1) fired **mid-conversation via the ticker, exactly once**, no `--stop-after`/re-ingest — `factual_gap @ 0.80` "I can find that — want me to?" → ENGAGEMENT; (2) **abort-on-resume HELD** — wall line transcribed, NO fire during resumed speech, fired only on the final clean 2 s silence; (3) **back-off de-dupe with real `QwenWallBackend` HELD** — `factual_gap @ 0.95` "Could you remind me of the conference date?" fired **once** (the T-204 double-fire is fixed). Loopback caveat unchanged (digital, best-case; real-room WER = T-502).
+  - **One-clock + no gated-module change:** holds (tick reads time only via gate predicates; the three gated files' diff is empty).
+
+  **T-302 REVIEW BRIEF FOR QA-TUNING (retained for the record):**
 
   **What changed (files):**
   - `src/jarvis/attention_layer.py`: added `_pending_wall: WallVerdict | None` field; updated `ingest()` to cache it; added `tick()` method; updated `_engage()` to clear it.
@@ -575,8 +581,33 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
   4. **Clean fire after 2 s**: a genuine wall followed by 2+ s of silence should produce exactly one interjection within ~200 ms of the gap opening.
   5. **Thread cleanliness**: the ticker thread must stop cleanly at window end (ticker_stop.set() → thread.join(timeout=1.0) in the finally block).
 
-- (planned T-303) Validate abort-on-resume and back-off on live audio. [core-engineer + qa-tuning]
-- (planned T-304) Latency budget pass — gate → detector → offer within target. [core-engineer]
+### T-303 — Validate abort-on-resume + back-off on live audio
+- **Status:** done
+- **Priority:** P0
+- **Role:** qa-tuning (+ core-engineer)
+- **Owner:** qa-tuning
+- **Phase:** 3
+- **Created:** 2026-06-15T00:00:00Z
+- **Claimed:** 2026-06-15T23:59:00Z
+- **Completed:** 2026-06-15T23:59:30Z
+- **Depends on:** T-302 ✅
+- **Description:** Validate the **real continuous Path-B loop** (T-302 `AttentionLayer.tick()` + the live ticker) on live audio on the M5 — what the old `--stop-after` trailing re-check stood in for. Confirm a Path-B interjection fires mid-conversation via the ticker (no `--stop-after`) and fires **once**; abort-on-resume suppresses the fire when speech resumes before the gap; back-off de-dupe holds with the real `QwenWallBackend` (the non-deterministic-offer case).
+- **Acceptance:** A live run record (verbatim) showing: a single mid-conversation ticker fire; abort-on-resume holding; back-off de-dupe with the real Qwen backend — or an honest note if the loopback was too poor to validate cleanly (lean on the 11 deterministic SimulatedClock tests as the rigorous proof).
+- **Progress:**
+  - 2026-06-15T23:59Z — claimed alongside the T-302 mandatory review (one combined gate).
+  - 2026-06-15T23:59Z — ran all three live validations on the M5 (BlackHole 2ch digital loopback, device 5). All passed verbatim. Recorded in `docs/qa/working-notes.md` §"T-303 — live validation".
+- **Notes:** **DONE.** Live results (verbatim, BlackHole device 5, nothing fabricated): **(1) mid-conversation ticker fire, exactly once** (heuristic brain, no `--stop-after`): `factual_gap @ 0.80` "I can find that — want me to?" → ENGAGEMENT. **(2) abort-on-resume HELD:** wall line transcribed, NO fire during resumed speech, fired only on the final clean 2 s silence. **(3) back-off de-dupe with real `QwenWallBackend` (`--local-brain`):** `factual_gap @ 0.95` "Could you remind me of the conference date?" fired **once** — the T-204 live double-fire is fixed. The 11 deterministic `SimulatedClock` tests are the logic proof; this live run is the real-audio confirmation. Loopback caveat unchanged (digital best-case; real-room WER = T-502). **→ Phase 3 has only T-304 (latency budget) left.**
+
+### T-304 — Latency budget pass — gate → detector → offer within target
+- **Status:** open
+- **Priority:** P1
+- **Role:** core-engineer
+- **Phase:** 3
+- **Created:** 2026-06-15T00:00:00Z
+- **Depends on:** T-302 ✅ (done — UNBLOCKED 2026-06-15)
+- **Description:** Latency budget pass — verify gate → detector → offer stays within the ~2 s offer-to-help target end-to-end on the M5. The continuous ticker (T-302) adds at most `TICK_INTERVAL_SECONDS` (0.20 s) of fire latency after the gap opens; characterize the full path (VAD endpoint hangover → wall detection → politeness gap → ticker fire → engaged dispatch) against the budget. [core-engineer]
+- **Acceptance:** A measured latency breakdown on the M5 (each stage + total), confirming the offer fires within target, with the joint ASR+SLM budget (T-201) folded in. NOT qa-gated unless it proposes a threshold change (politeness-gap / tick cadence) — those would route back to qa-tuning for a T-503-style decision.
+- **Notes:** **UNBLOCKED by T-302 done.** Last Phase-3 task. The tick cadence (0.20 s) is a `live.py` constant, not a gated threshold — but any proposal to change `politeness_gap_seconds` to hit the budget IS qa-gated → route to qa-tuning.
 
 ### Phase 4 — The voice
 - (planned T-401) EngagedResponder — Claude spoken-style answer, grounded in the handoff, streamed. [voice-integration-engineer]

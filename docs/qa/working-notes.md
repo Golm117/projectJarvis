@@ -2,6 +2,118 @@
 
 _(scratchpad for in-flight thinking; promote durable findings to topic files)_
 
+## T-302 tick() + continuous Path-B loop — MANDATORY REVIEW: APPROVED + T-303 live validation done (2026-06-15)
+
+Mandatory qa-tuning review of core-engineer's `AttentionLayer.tick()` + the live
+ticker (`live.py`). This is the success-metric-critical change: it changes *when
+interjections fire live* (continuous re-evaluation during silence, replacing the
+T-105/T-204 trailing-re-ingest smoke affordance). **Verdict: APPROVED → T-302
+done; T-303 done.** Suite **281 green**, ruff clean. Gated modules
+(`TurnTakingGate`/`SummonController`/`WallDetector`) confirmed **byte-for-byte
+unchanged** (`git diff cc1162c..HEAD` over the three files = empty). **T-304
+unblocked** — last Phase-3 task.
+
+### Review focus items (the brief's 6) — all PASS
+
+1. **Double-fire fix — SOUND, the original live bug is fixed.** The cached-verdict
+   design works via a *double guard*: (a) `tick()`/`ingest` clear `_pending_wall`
+   on the first fire, so all later ticks hit the `if self._pending_wall is None:
+   return` no-op — this is unconditional, independent of offer determinism; (b) the
+   *same* `WallVerdict` object is re-evaluated on every tick, so
+   `category::offer` is a STABLE signature and `SummonController`'s existing
+   back-off de-dupes even if guard (a) were absent. `test_tick_fires_exactly_once_
+   across_many_calls` pins guard (a) (20 ticks → 1 fire, `_pending_wall is None`
+   after). NOTE: that test's `FakeWallBackend` returns a *fixed* offer, so it does
+   not itself reproduce the non-determinism that broke T-204 — guard (a) is what it
+   pins. The real non-deterministic-offer case I confirmed **live** with
+   `--local-brain` (below): one fire, one Qwen offer. Between the deterministic pin
+   of guard (a) and the live confirmation of the end-to-end de-dupe, the fix is
+   fully validated.
+2. **Clearing / staleness policy — ACCEPTED (precision-safe; one watch-item flagged
+   to T-503, not blocking).** Judged against precision (= useful ÷ total Path-B
+   fires). The policy: set/replace at ingest, clear on fire + on engagement, NOT
+   cleared on speech-resume, replaced by a fresher wall. My judgments:
+   - *Replace-with-fresher-wall*: correct. Avoids a stale first wall firing after
+     the topic moved — precision-positive.
+   - *Fire-on-the-next-fresh-silence-after-an-abort*: correct **for v0**. The gap
+     is still genuinely open (the user asked, then talked more, then went quiet) —
+     the wall context is still live and the silence is real, so the offer is well-
+     timed. Confirmed live (abort-on-resume run): the wall persisted across resumed
+     speech and fired only on the eventual clean 2 s silence.
+   - *The one watch-item:* a pending wall can sit cached across an arbitrary number
+     of intervening non-wall utterances and fire on a much-later silence — IF the
+     conversation has genuinely moved on (question since answered, topic shifted)
+     that would be a **stale false interjection** (the precision-killer). In
+     practice the *replace-with-fresher-wall* rule + the fact that real
+     conversations keep producing wall-signal lines bounds this, and the heuristic/
+     Qwen backends only cache on a fresh wall-signal line. But there is **no time-
+     to-live on `_pending_wall`** and no "topic-shift clears the pending wall"
+     rule. I am NOT requiring a change for v0 (no evidence of it firing wrongly in
+     the live runs; adding a TTL is a `SummonController`/orchestrator-policy tuning
+     question). **Flagged to T-503**: add a staleness fixture (wall cached →
+     several off-topic turns → late silence) and decide whether `_pending_wall`
+     needs a TTL or a topic-shift clear. Recorded for the orchestrator as a
+     non-blocking human/Phase-5 item.
+3. **No spurious fires during brief pauses — SOUND.** The ticker only fires when
+   `gate.politeness_gap_elapsed()` (≥ 2 s). A routine sub-2 s mid-sentence pause
+   keeps the predicate False, so `tick()` is a no-op. Confirmed live: in the abort-
+   on-resume run the short inter-clause pauses produced no fire. The 2 s gap + the
+   confidence floor are the bar; retuning either is a `SummonController`/threshold
+   change → **left to Phase-5 T-503 (qa-gated)**, not touched here.
+4. **abort-on-resume preserved — SOUND, confirmed live.** `tick()` adds no new
+   logic; `consider_interjection` reads `gate.speech_resumed()` (checked before the
+   gap) and returns None. Deterministic pins: `test_tick_does_not_fire_when_speech_
+   resumed`, `test_tick_fires_after_abort_then_fresh_silence`. Live: the wall line
+   did NOT fire while speech kept resuming; it fired only on the final clean
+   silence.
+5. **One-clock invariant + no gated-module change — HOLDS.** `tick()` reads time
+   ONLY via the gate predicates (no new `time.monotonic()`).
+   `test_tick_reads_time_only_via_gate_predicates` pins that the SimulatedClock
+   controls the fire threshold. Gated modules unchanged (diff empty).
+6. **Threading — sane.** Single `threading.Lock` in `live.py` serialises
+   `ingest()` and `tick()`; core stays lock-free. `_pending_wall` is only ever read/
+   written under that lock (both `ingest` and `tick` are lock-wrapped at the call
+   sites). No obvious race. `test_tick_and_ingest_thread_safety_with_lock` stresses
+   it. I/O-layer, not qa-gated, but no defect.
+
+### T-303 — live validation on this M5 (BlackHole 2ch digital loopback, device 5)
+
+All verbatim, nothing fabricated. The real continuous ticker (no `--stop-after`,
+no trailing re-ingest) is what's exercised — this is what the old smoke affordance
+stood in for.
+
+- **Fires mid-conversation via the ticker, exactly once (heuristic brain):**
+  `--say "What was the date of the conference again?"` →
+  `>> JARVIS (interjecting, factual_gap @ 0.80): I can find that — want me to?` →
+  ENGAGEMENT `wall:factual_gap`. ONE interjection, ONE engagement. The fire came
+  from `tick()` on the natural trailing silence, not a re-ingest.
+- **abort-on-resume holds:** `--say "What was the date of the conference again?
+  Actually wait, I think I remember now, it was the tenth, yes the tenth of next
+  month, so we are all set on that."` → the wall line transcribed first, but NO
+  fire during the resumed speech; the interjection fired only after the final
+  clean 2 s silence ("So we are all set on that."). Speech-resume suppressed the
+  ticker every time it landed.
+- **Back-off de-dupe with the real non-deterministic QwenWallBackend (`--local-
+  brain`):** `--say "What was the date of the conference again?"` →
+  `>> JARVIS (interjecting, factual_gap @ 0.95): Could you remind me of the
+  conference date?` → ENGAGEMENT. **Exactly one fire / one Qwen offer** — the T-204
+  live double-fire (same wall, two different offer phrasings) is FIXED. The cached-
+  verdict design held the signature stable across the ~10 ticks/gap.
+
+Loopback caveat (same as T-105/T-204): BlackHole is a *digital* (best-case)
+loopback; real-room WER is still T-502. The firing cadence, gate timing, abort,
+and de-dupe are all the real live pipeline.
+
+### Human / Phase-5 flags (neither blocks)
+- **Pending-wall staleness TTL** (item 2 watch): no TTL / topic-shift clear on
+  `_pending_wall`. T-503 should add a staleness fixture and decide if a TTL is
+  warranted. A TTL would be a `SummonController`/orchestrator-policy change → qa-
+  gated; flagged, not taken.
+- **politeness-gap / confidence-floor retune** — unchanged here; Phase-5 T-503
+  lever (carry-forward from T-203/T-204).
+
+---
+
 ## T-203 QwenWallBackend — MANDATORY REVIEW: APPROVED (2026-06-15)
 
 Mandatory qa-tuning review of local-ml-engineer's `QwenWallBackend`

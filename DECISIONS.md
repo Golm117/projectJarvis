@@ -18,6 +18,15 @@ Keep entries short. One paragraph per field is plenty. If it takes more, it prob
 
 ---
 
+## 2026-06-15 — Pending-wall clearing / staleness policy for the continuous Path-B ticker (T-302, qa-tuning-reviewed)
+
+**Decided by:** discussion (core-engineer proposed in T-302; qa-tuning accepted in the mandatory T-302/T-303 review)
+**Status:** accepted
+**Context:** T-302 added `AttentionLayer.tick()` + a live ticker so Path-B interjections fire mid-conversation during silence (the `MicSource` generator blocks during silence, so `ingest` — and `consider_interjection` — never runs as the politeness gap grows). This requires caching a wall verdict (`_pending_wall`) at ingest and re-evaluating it on each tick. The cache lifetime is a precision question (the success metric = useful ÷ total Path-B fires): a stale pending wall firing after the conversation moved on is a false interjection.
+**Decision:** `_pending_wall` is set/replaced at ingest (only when `consider_interjection` returns None AND `verdict.is_wall`), cleared on fire and on any engagement (Path A or B), replaced by a fresher wall at the next ingest, and is NOT cleared on speech-resume (so it can fire on the next fresh clean silence) nor by an intervening non-wall utterance. The same `WallVerdict` object is re-evaluated on every tick, keeping the `category::offer` back-off signature stable across ticks (this is also the double-fire fix — see below). No qa-gated module changes; the cache lives entirely in the orchestrator.
+**Rationale:** Accepted as precision-safe for v0 and confirmed on live audio (T-303): the ticker fired exactly once mid-conversation, abort-on-resume held (no fire during resumed speech; fired only on the eventual clean silence), and the real non-deterministic `QwenWallBackend` offer de-duplicated to a single fire (fixing the T-204 live double-fire). Replace-with-fresher-wall removes the most likely stale-fire path; fire-on-next-fresh-silence-after-abort is correct because the gap is genuinely open and the wall context is still live.
+**Alternatives considered:** Clear `_pending_wall` on speech-resume (rejected — would drop a still-valid wall just because the user added a clause before going quiet). Key back-off on `category` alone (rejected — a qa-gated `SummonController` change; the cached-verdict approach achieves stable signatures with no gated edit). **Open follow-up (flagged to Phase-5 T-503, NOT decided here):** `_pending_wall` currently has no TTL or topic-shift clear, so a wall cached across many off-topic turns could in principle fire late as a stale false interjection. Bounded in practice (replace-with-fresher + the cheap wall-signal pre-filter) and no misfire observed live, so no v0 change is required — but T-503 should add a staleness fixture and decide whether a TTL/topic-shift-clear is warranted. Any such change is a SummonController/orchestrator-policy change → qa-gated.
+
 ## 2026-06-15 — Backend selection: `--local-brain` / `--mock-brain` flag on the `--live` path (T-204)
 
 **Decided by:** Claude Code (local-ml-engineer) — T-204

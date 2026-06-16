@@ -17,7 +17,22 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-15 (T-302 in review → continuous Path-B loop built)
+## Current state — 2026-06-15 (T-302 APPROVED + T-303 done → only T-304 left in Phase 3)
+
+**Phase:** phase_3 — Knowing when to speak (ACTIVE). **T-302 (continuous real-time Path-B re-evaluation) is APPROVED → done; T-303 (live validation) is done** (qa-tuning, this session — one combined mandatory gate). **T-304 (latency budget) is UNBLOCKED and is the last Phase-3 task.** Suite **281 green**, ruff clean. On `main`, not pushed.
+
+**T-302/T-303 qa-tuning verdict: APPROVED.** The continuous ticker is the success-metric-critical change (it changes *when* interjections fire live). Gated modules (TurnTakingGate/SummonController/WallDetector) confirmed **byte-for-byte unchanged** (diff empty). Three deliverables:
+1. **Double-fire fix — SOUND, the T-204 live bug is FIXED.** Double guard: `_pending_wall` cleared on first fire (later ticks no-op, offer-determinism-independent) + the same `WallVerdict` object re-evaluated each tick (stable signature → existing back-off de-dupes). The deterministic test pins guard (a) with a *fixed-offer* fake; the real non-deterministic-offer de-dupe I confirmed **live** with `--local-brain` (one fire, one Qwen offer).
+2. **Staleness policy — ACCEPTED for v0.** Replace-with-fresher-wall + fire-on-next-fresh-silence-after-abort are both precision-safe (confirmed live). **One non-blocking watch-item flagged to T-503:** `_pending_wall` has no TTL / topic-shift clear → a wall cached across many off-topic turns *could* fire late as a stale false interjection. Bounded in practice; no misfire observed live. Adding a TTL is a qa-gated SummonController/orchestrator-policy change → T-503 should add a staleness fixture and decide. NOT taken unilaterally.
+3. **Live validation (T-303, M5, BlackHole device 5, verbatim):** (a) fired **mid-conversation via the ticker, exactly once**, no `--stop-after`/re-ingest; (b) **abort-on-resume HELD** (no fire during resumed speech; fired only on the final clean silence); (c) **back-off de-dupe HELD with the real `QwenWallBackend`** (one Qwen offer — T-204 double-fire fixed). Details in `docs/qa/working-notes.md` §T-302/T-303.
+
+**→ Phase 3 picks up:** **T-304 (latency budget pass)** — gate → detector → offer within the ~2 s target on the M5; the ticker adds ≤ 0.20 s. NOT qa-gated unless it proposes a threshold change (politeness-gap), which would route back to qa-tuning. After T-304, Phase 3 is complete and Phase 4 (the voice) begins.
+
+**Human / Phase-5 flags (neither blocks):** (1) the `_pending_wall` staleness TTL above (T-503); (2) politeness-gap / confidence-floor retune (T-503 lever, carry-forward from T-203/T-204).
+
+---
+
+## Prior state — 2026-06-15 (T-302 in review → continuous Path-B loop built)
 
 **Phase:** phase_3 — Knowing when to speak (ACTIVE). T-302 (continuous real-time SummonController re-evaluation) is **IN REVIEW** (core-engineer, this session). Suite **281 green** (270 baseline + 11 new), ruff clean. On `main`, not pushed.
 
