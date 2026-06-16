@@ -143,7 +143,8 @@ def test_ts_is_stamped_from_the_vad_timeline_not_a_wall_clock() -> None:
     # 3 silence + 10 speech + 4 silence frames. The speech-end edge fires after
     # _END_FRAMES (=2) consecutive silence frames following the speech, i.e. at
     # frame index 3 (silence) + 10 (speech) + 2 (silence) = 15 frames seen.
-    transcriber = FakeTranscriber(["x"])
+    # Use a real two-char word so the T-505 lexical filter doesn't drop it.
+    transcriber = FakeTranscriber(["hi"])
     mic = _mic_source([("silence", 3), ("speech", 10), ("silence", 4)], transcriber)
 
     (utt,) = list(mic.utterances())

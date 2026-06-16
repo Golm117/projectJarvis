@@ -61,6 +61,7 @@ diarizer can fill this later behind the same field.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable, Iterator
 from typing import Protocol, runtime_checkable
 
@@ -76,10 +77,83 @@ from jarvis.types import Utterance
 # the same Utterance.speaker field without touching anything downstream.
 DEFAULT_SPEAKER = "speaker"
 
-# The MLX-converted whisper base.en weights chosen in the T-101 spike (DECISIONS.md
-# 2026-06-15 "ASR runtime: mlx-whisper (base.en)"). small.en is the documented
-# upgrade lever; this is the default the spike recommended.
-DEFAULT_MLX_WHISPER_REPO = "mlx-community/whisper-base.en-mlx"
+# The MLX-converted whisper small.en weights — the T-505 upgrade from base.en.
+# Documented as the upgrade lever in docs/audio/asr-spike.md; upgraded after
+# real-room testing revealed "Jarvis" → "Germans" mishearing and garbage segments
+# with base.en on the built-in mic. small.en is still far inside the joint ASR+SLM
+# budget (see T-505 re-measurement in asr-spike.md). base.en remains selectable by
+# passing its repo to MlxWhisperTranscriber's `repo` constructor arg.
+DEFAULT_MLX_WHISPER_REPO = "mlx-community/whisper-small.en-mlx"
+
+# ---------------------------------------------------------------------------
+# Segment noise filter — thresholds (configurable constants)
+# ---------------------------------------------------------------------------
+# A transcribed segment is dropped (never becomes an Utterance) when its text
+# passes none of the lexical tests below. This blocks non-lexical noise segments
+# like "!", "service.!!!!!!!!!!", "Mm." from reaching the rolling window, living
+# summary, wall detector, or Claude.
+#
+# Design goals:
+#   DROP:  empty / whitespace, pure punctuation/symbol strings ("!", "..", "Mm."),
+#          extremely short single-character bursts, ultra-short non-word content.
+#   KEEP:  wake word ("Jarvis"), short real replies ("Yes.", "No.", "Okay."),
+#          any segment containing at least one alphabetic word of a minimum length.
+#
+# A "word" here means a contiguous run of alphabetic characters (no digits,
+# no punctuation) — this intentionally matches the English-word content of a
+# real spoken reply while rejecting single-letter noise and pure symbol strings.
+
+# Minimum number of *alphabetic characters* a word must contain to count as a
+# real lexical word (filters single-letter noise like isolated "I" transcriptions
+# from room noise, while keeping "No", "Yes", "Mm" — wait, "Mm" is exactly the
+# non-lexical case we want to drop). Words shorter than this are not counted.
+# "No" = 2, "Yes" = 3, "Jarvis" = 6 — all pass MIN_WORD_LENGTH = 2.
+MIN_WORD_LENGTH: int = 2
+
+# A segment must contain at least this many qualifying lexical words to be kept.
+# With MIN_WORD_CHARS = 1 this effectively means: at least one real word >= 2 chars.
+# "Yes." → 1 word → kept. "!" → 0 words → dropped. "Mm." → 0 words (len("Mm")=2
+# but we check it separately) → actually "Mm" is 2 chars, so it would pass the
+# word-length check. We handle this with the additional STOP_SYLLABLES set below.
+MIN_LEXICAL_WORDS: int = 1
+
+# Non-lexical filler syllables that are common ASR noise artefacts. A segment
+# whose *only* words are all members of this set is treated as non-lexical noise
+# and dropped, even though the words technically have >= MIN_WORD_LENGTH chars.
+# Keep this set small and obvious — the goal is noise, not aggressive filtering.
+# "Mm" / "Hmm" / "Uh" / "Um" are universal filler-sound transcriptions from
+# background audio that carry no information for the pipeline. Real short replies
+# ("Yes", "No", "Okay", "Sure", "Jarvis") are explicitly NOT in this set.
+STOP_SYLLABLES: frozenset[str] = frozenset(
+    {"mm", "mmm", "hmm", "hm", "uh", "um", "mhm", "mhmm", "huh", "ah", "eh"}
+)
+
+# Pre-compiled regex: a "word" = one or more ASCII letters (no digits, no punct).
+_ALPHA_WORD_RE: re.Pattern[str] = re.compile(r"[a-zA-Z]+")
+
+
+def _is_lexical(text: str) -> bool:
+    """Return True iff *text* contains enough real spoken content to keep.
+
+    A segment is kept when:
+    1. After stripping whitespace it is non-empty.
+    2. It contains at least ``MIN_LEXICAL_WORDS`` alphabetic words each of
+       length >= ``MIN_WORD_LENGTH``.
+    3. Not ALL of those qualifying words are in ``STOP_SYLLABLES``.
+
+    This keeps "Jarvis", "Yes.", "No.", "Okay.", "What was the date again?"
+    and drops "", "!", "service.!!!!!!!!!!", "Mm.", "Hmm", "Uh".
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+    words = [
+        m.group() for m in _ALPHA_WORD_RE.finditer(stripped) if len(m.group()) >= MIN_WORD_LENGTH
+    ]
+    if len(words) < MIN_LEXICAL_WORDS:
+        return False
+    # If every qualifying word is a stop syllable, drop it.
+    return not all(w.lower() in STOP_SYLLABLES for w in words)
 
 
 @runtime_checkable
@@ -263,7 +337,16 @@ class MicSource:
             self._close_segment()
 
     def _close_segment(self) -> None:
-        """Concatenate + transcribe the current segment, stashing a pending Utterance."""
+        """Concatenate + transcribe the current segment, stashing a pending Utterance.
+
+        The segment is dropped (no Utterance produced) when:
+        - frames is empty,
+        - the transcriber returned empty/whitespace text, or
+        - the text fails the lexical noise filter (``_is_lexical``): pure
+          punctuation/symbol strings, ultra-short non-word content, or filler
+          syllables like "Mm." / "Uh" that are common ASR artefacts on noisy
+          built-in mics. Short real replies ("Yes.", "No.", "Jarvis") pass.
+        """
         self._in_segment = False
         frames = self._segment_frames
         self._segment_frames = []
@@ -271,7 +354,7 @@ class MicSource:
             return
         waveform = np.concatenate([f.samples for f in frames]).astype(np.float32)
         text = self._transcriber.transcribe(waveform, self._sample_rate).strip()
-        if not text:
+        if not _is_lexical(text):
             return
         # ts: by default the audio position of the segment's end on the VAD
         # timeline (frames seen ÷ rate) — clock-free and deterministic. If a `now`
