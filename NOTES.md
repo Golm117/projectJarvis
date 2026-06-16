@@ -17,7 +17,26 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-16 (T-506 done → VAD pre-roll onset fix)
+## Current state — 2026-06-16 (T-507 done → anti-fragmentation endpointing)
+
+**Phase:** phase_5 field-fix. T-507 (anti-fragmentation endpointing + question fidelity) is **DONE** (sensing-engineer). Suite **480 green** (466 + 14 new), ruff clean. On `main`, NOT pushed.
+
+**T-507 — what was built:**
+- **`DEFAULT_SILENCE_END_FRAMES = 15`** (raised from 6) in `src/jarvis/audio/vad.py`. At 32 ms/frame: 6 frames = 192 ms → 15 frames = 480 ms.
+- Rationale + tradeoff documented in a `vad.py` comment block: 480 ms absorbs a natural breath-length pause; a genuine ~1 s thinking pause is a real turn boundary and still splits (intentional).
+- Latency tradeoff: +288 ms delay on turn-end detection. Modest vs the 2 s politeness gap; summon (Path A) also sees the delay but fires on the completed utterance.
+- **ASR punctuation investigation:** `mlx_whisper.transcribe` `initial_prompt` was tested and confirmed working. Decision: **leave decoding default**. The structural fix (T-506 onset + T-507 anti-frag) gives Whisper the full prosodic arc it needs to emit `?`. Documented in `MlxWhisperTranscriber` docstring.
+- **14 new tests** in `tests/test_t507_antifrag_endpointing.py`.
+
+**Root cause confirmed (from user live log):** "times 7." + "What does that equal?" were two segments because a mid-sentence breath pause > 192 ms closed the first segment. At 480 ms, the same pause is absorbed.
+
+**Live re-test honesty:** `--say` loopback produced 0 utterances (known limitation: TTS digital loopback doesn't reliably produce long-enough audio in the short run window when the mic is device 6 built-in). Unit tests prove the mechanism deterministically. **User should verify with natural voice** (`~/.local/bin/uv run python -m jarvis --live --local-brain --device 6 --seconds 30` — speak a question with a natural breath pause and confirm one utterance arrives with `?`).
+
+**→ Remaining Phase 5:** T-504 (thermal/battery soak) only — deferred to real-world use.
+
+---
+
+## Prior state — 2026-06-16 (T-506 done → VAD pre-roll onset fix)
 
 **Phase:** phase_5 field-fix. T-506 (VAD pre-roll / lookback buffer) is **DONE** (sensing-engineer). Suite **466 green** (454 + 12 new), ruff clean. On `main`, NOT pushed.
 

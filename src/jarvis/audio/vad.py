@@ -60,13 +60,36 @@ from jarvis.audio.source import DEFAULT_SAMPLE_RATE, AudioFrame, AudioSource
 from jarvis.core.turn_taking_gate import TurnTakingGate
 
 # Silero's own defaults, expressed in frames at 512-sample/32 ms granularity.
-# Speech is declared after ~1 confident frame; the end of a turn after ~6 frames
-# (~200 ms) of silence — a short VAD-side hangover that debounces intra-word
-# pauses, deliberately far shorter than the gate's ~2 s politeness gap (the gate
-# owns the *social* timing; the VAD owns the *acoustic* segmentation).
+# Speech is declared after ~1 confident frame.
+#
+# Endpoint hangover (silence_end_frames) — tuned from the upstream Silero default
+# of 6 frames (~192 ms) to 15 frames (~480 ms) in T-507:
+#
+#   WHY 15 frames?  A natural breath-length mid-sentence pause is typically
+#   200–400 ms.  At 6 frames (192 ms) those pauses close the segment and split a
+#   single utterance into fragments — the live log showed "times 7." and "What
+#   does that equal?" arriving as two separate segments when they were one spoken
+#   question.  At 15 frames (480 ms) a normal breath pause is absorbed; the
+#   segment stays whole; Whisper has the full prosodic context to emit punctuation
+#   (including "?") correctly.
+#
+#   WHY NOT longer?  A genuine ~1 s thinking pause between sentences IS a real
+#   turn boundary — merging those would add ~1 s+ of extra latency before the
+#   segment is emitted, delaying the politeness-gap clock.  480 ms is well below
+#   that; it is the sweet spot between "holds a breath" and "holds a thought".
+#
+#   TRADEOFF to be aware of:  raising the hangover delays turn-end detection by
+#   ~+288 ms (480 ms − 192 ms) relative to the old value.  The politeness gap is
+#   2 s; a Path-B offer therefore starts ~288 ms later.  The summon (Path A) fires
+#   on the completed utterance and is similarly delayed by ~288 ms.  Both delays
+#   are modest and well within any user-perceptible threshold.  They are the
+#   correct tradeoff for fragmentation-free transcription.
+#
+#   The constant is constructor-injectable in SileroVad (speech_start_frames /
+#   silence_end_frames) so Phase-5 tuning can revisit from one place.
 DEFAULT_THRESHOLD = 0.5
 DEFAULT_SPEECH_START_FRAMES = 1
-DEFAULT_SILENCE_END_FRAMES = 6
+DEFAULT_SILENCE_END_FRAMES = 15  # ~480 ms at 32 ms/frame (raised from 6 in T-507)
 
 
 @runtime_checkable
@@ -165,7 +188,10 @@ class SileroVad:
         speech_start_frames: consecutive speech frames required before a
             speech-start edge (debounce; default 1).
         silence_end_frames: consecutive silence frames required before a
-            speech-end edge (the VAD-side endpoint hangover; default ~6 ≈ 200 ms).
+            speech-end edge (the VAD-side endpoint hangover; default ~15 ≈ 480 ms,
+            raised from 6 in T-507 to absorb natural breath-length mid-sentence
+            pauses without splitting utterances — see ``DEFAULT_SILENCE_END_FRAMES``
+            for the full rationale and tradeoff).
 
     Use :meth:`process_frame` to feed one frame at a time, or :meth:`run` to
     consume an entire ``AudioSource`` to exhaustion.

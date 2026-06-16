@@ -198,7 +198,7 @@ class Transcriber(Protocol):
 
 
 class MlxWhisperTranscriber:
-    """The real ASR: mlx-whisper ``base.en`` on Apple Silicon (lazy import).
+    """The real ASR: mlx-whisper ``small.en`` on Apple Silicon (lazy import).
 
     Wraps ``mlx_whisper.transcribe(waveform, path_or_hf_repo=...)`` — which accepts
     a float32 waveform directly and returns ``{"text": ...}``. ``mlx_whisper`` is
@@ -208,8 +208,20 @@ class MlxWhisperTranscriber:
 
     Args:
         repo: the HF repo / local path of the MLX-converted Whisper weights
-            (default: ``base.en``, the T-101 choice). Pass the ``small.en`` repo to
-            pull the documented upgrade lever.
+            (default: ``small.en``, the T-505 upgrade). Pass the ``base.en`` repo to
+            revert to the original T-101 choice.
+
+    ## Question / punctuation fidelity (T-507)
+
+    Whisper emits ``?`` reliably when the whole spoken utterance is present — the
+    prosodic context (rising pitch at a sentence-final question) is what drives
+    punctuation, not a decoding parameter. ``mlx_whisper.transcribe`` exposes an
+    ``initial_prompt`` kwarg and ``decode_options`` but setting them for punctuation
+    improvement risks biasing the transcript or introducing hallucinations,
+    especially for short borderline segments. The right fix (T-506 pre-roll +
+    T-507 anti-fragmentation) is **structural**: keep the whole utterance intact
+    from onset through the natural pause, then let Whisper transcribe the full
+    prosodic arc. Decoding defaults are left unchanged.
     """
 
     def __init__(self, repo: str = DEFAULT_MLX_WHISPER_REPO) -> None:
