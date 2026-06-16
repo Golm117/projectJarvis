@@ -297,13 +297,13 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 - **Notes:** **DONE** (not a mandatory-review trigger). Frozen seams aligned to (not reshaped): T-103 VAD drives `TurnTakingGate.on_speech_start`/`on_speech_end` (edge API; gate stamps time from its injected clock); `MicSource` (T-104) feeds `Utterance` behind `TranscriptSource`. New abstraction introduced: **`AudioSource`** (the audio-path analogue of the injected-backend discipline) — documented in module-map.md §"The audio sensing path". **T-102 done → T-103 (Silero VAD) is UNBLOCKED:** consume `AudioSource` frames, emit gate edges. Live mic works here — T-103's optional live check can use it; full live-transcript smoke is T-105.
 
 ### T-103 — Silero VAD speech/silence segmentation
-- **Status:** open
+- **Status:** claimed
 - **Priority:** P1
 - **Role:** sensing-engineer
-- **Owner:** —
+- **Owner:** sensing-engineer
 - **Phase:** 1
 - **Created:** 2026-06-15T00:00:00Z
-- **Claimed:** —
+- **Claimed:** 2026-06-15T00:00:00Z
 - **Completed:** —
 - **Depends on:** T-102
 - **Description:** Integrate **Silero VAD** (prefer the lightweight `silero-vad` pip package; torch is acceptable on the M5 — note the dep weight). Consume audio frames from the `AudioSource` (T-102), segment speech vs. silence, and **emit boundary events that drive the `TurnTakingGate`'s `on_speech_start()` / `on_speech_end()` edge API** — the gate stamps time from its injected clock, so the VAD emits *edges*, not timestamps. Keep VAD sensitivity/threshold configurable (constructor-injected). Aligns the live audio path to the same gate the Phase-0 `ScriptedSource` drove.
