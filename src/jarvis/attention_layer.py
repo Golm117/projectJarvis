@@ -71,7 +71,7 @@ from jarvis.core.rolling_window import RollingWindow
 from jarvis.core.summon_controller import SummonController
 from jarvis.core.turn_taking_gate import TurnTakingGate
 from jarvis.core.wall_detector import WallBackend, WallDetector
-from jarvis.types import EngagementHandoff, Interjection, SummonDecision, Utterance
+from jarvis.types import EngagementHandoff, Interjection, SummonDecision, Utterance, WallVerdict
 
 # The wake word that fires Path A (summon). Ported from the prototype's WAKE_WORD.
 WAKE_WORD = "jarvis"
@@ -148,6 +148,23 @@ class AttentionLayer:
         self._on_interjection = on_interjection
         self._on_engagement = on_engagement
 
+        # T-302: the pending wall verdict from the most recent ingest that returned
+        # None (gap not yet open) and whose verdict.is_wall is True.  tick() re-
+        # evaluates this verdict periodically during the silence that follows.
+        #
+        # Clearing / staleness policy (rationale in docs/architecture/phase3-invariants.md §3):
+        #   - Set when: consider_interjection(verdict) returns None AND verdict.is_wall is True.
+        #   - Cleared when: the verdict fires (Path B engaged) — fire-at-most-once.
+        #   - Replaced when: a newer wall verdict arrives at ingest (fresher context wins).
+        #   - Cleared when: Path A (summon) fires via _engage — engagement ended the ambient half.
+        #   - NOT cached: non-wall verdicts (verdict.is_wall is False); nothing to wait for.
+        #
+        # The same WallVerdict object is reused across all tick() calls so the
+        # back-off signature (category::offer) is STABLE — solving the non-deterministic
+        # Qwen offer double-fire found in NOTES.md T-204 live run.  No new model call
+        # is made during the silence window; the cached verdict is what is re-evaluated.
+        self._pending_wall: WallVerdict | None = None
+
     # -- the one public ingest path ------------------------------------------
 
     def ingest(self, u: Utterance) -> None:
@@ -178,7 +195,56 @@ class AttentionLayer:
             verdict = self._detector.detect(self._window.transcript(), self._summary.text)
             decision = self._controller.consider_interjection(verdict)
             if decision is not None:
+                self._pending_wall = None  # consumed by Path B fire
                 self._interject(decision)
+            elif verdict.is_wall:
+                # Gap not yet open (or speech resumed), but a real wall was detected.
+                # Cache it so tick() can re-evaluate once the politeness gap opens.
+                # A newer wall at the next ingest will replace this one (fresher wins).
+                self._pending_wall = verdict
+            # Non-wall verdicts (is_wall=False) are not cached — nothing to wait for.
+
+    # -- T-302: continuous Path-B re-evaluation during silence ----------------
+
+    def tick(self) -> None:
+        """Re-evaluate Path B with the cached wall verdict (called during silence).
+
+        The ``MicSource.utterances()`` generator blocks during silence — ``ingest``
+        never runs, so ``SummonController.consider_interjection`` is never called as
+        the politeness gap grows.  A background thread in ``live.py`` calls
+        ``tick()`` periodically (~200 ms) to give ``consider_interjection`` a chance
+        to fire once the gap opens.
+
+        Design properties:
+
+        * **Pure reads only.** ``tick()`` reads time *exclusively* through the gate
+          predicates (``politeness_gap_elapsed()`` / ``speech_resumed()``) — the same
+          path ``consider_interjection`` always uses.  No new ``time.monotonic()``,
+          no new clock ownership.  The one-clock invariant is preserved.
+        * **No-op when idle.** If ``_pending_wall`` is ``None`` (no wall was detected
+          at the last ingest, or the wall already fired / was cleared by an
+          engagement), ``tick()`` returns immediately.
+        * **Fires at most once.** The first ``tick()`` that succeeds clears
+          ``_pending_wall`` so subsequent ticks are no-ops — solving the double-fire
+          bug seen in the T-204 live run with the non-deterministic Qwen offer text.
+          The *same* ``WallVerdict`` object is re-evaluated on every tick, so the
+          ``category::offer`` back-off signature is stable across all ticks — the
+          existing ``SummonController`` back-off de-dupes correctly with no change to
+          the qa-gated module.
+        * **Abort-on-resume is free.** If speech resumes during the tick loop,
+          ``gate.speech_resumed()`` is ``True`` and ``consider_interjection`` returns
+          ``None`` — the hard-no is preserved without any new logic.
+        * **Thread-safety is the caller's responsibility.** ``tick()`` is a pure
+          method with no locking.  The caller (``live.py``'s daemon thread) wraps
+          both ``ingest`` and ``tick`` calls in a shared ``threading.Lock`` so the
+          two threads never interleave.
+        """
+        if self._pending_wall is None:
+            return
+        decision = self._controller.consider_interjection(self._pending_wall)
+        if decision is not None:
+            self._pending_wall = None  # consumed — fire at most once
+            self._interject(decision)
 
     # -- engagement: assemble the handoff + dispatch to the engaged half ------
 
@@ -203,7 +269,12 @@ class AttentionLayer:
         orchestrator adds the ``summary`` and ``recent_excerpt`` it owns and turns
         it into the boundary ``EngagementHandoff``, then dispatches it through the
         ``EngagedResponder`` → ``VoiceOutput`` seams.
+
+        T-302: Clears ``_pending_wall`` on any engagement (Path A or Path B).
+        Once Jarvis has engaged on any path, the ambient half is done for this turn
+        and there is no wall worth waiting on — the wall's context has been consumed.
         """
+        self._pending_wall = None  # consumed — ambient half done for this turn
         handoff = EngagementHandoff(
             trigger_reason=decision.handoff_reason(),
             summary=self._summary.text,

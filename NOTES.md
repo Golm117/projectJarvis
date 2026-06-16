@@ -17,7 +17,24 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-15 (T-301 DONE → Phase 3 integration seam documented)
+## Current state — 2026-06-15 (T-302 in review → continuous Path-B loop built)
+
+**Phase:** phase_3 — Knowing when to speak (ACTIVE). T-302 (continuous real-time SummonController re-evaluation) is **IN REVIEW** (core-engineer, this session). Suite **281 green** (270 baseline + 11 new), ruff clean. On `main`, not pushed.
+
+**T-302 — what was built:**
+
+1. **`AttentionLayer._pending_wall: WallVerdict | None`** (new field) — caches the wall verdict from the most recent ingest that returned None from consider_interjection while `verdict.is_wall` is True. Non-wall verdicts never cached. Cleared on any engagement (Path A or Path B) and on fire. Replaced by newer walls at next ingest.
+2. **`AttentionLayer.tick()`** (new method) — pure re-evaluation hook. If `_pending_wall` is not None, calls `self._controller.consider_interjection(self._pending_wall)`. Fires and clears on success. No-op otherwise. Reads time exclusively through the gate predicates — one-clock invariant preserved.
+3. **`live.py` — daemon ticker thread + lock** — replaces the old trailing re-check smoke-test affordance (removed). A `threading.Lock` (`_layer_lock`) serialises `layer.ingest()` and `layer.tick()` from their respective threads (utterance-consumer + ticker). `TICK_INTERVAL_SECONDS = 0.20` gives ~10 ticks per 2 s gap.
+4. **11 new tests** in `tests/test_tick_continuous_path_b.py` — deterministic on SimulatedClock, no mic/model/real clock. Pins: fire-after-gap, fire-exactly-once (double-fire regression), abort-on-resume, no-op when idle, Path-A clears cache, Path-B-at-ingest clears cache, fresher wall replaces stale, non-wall does not clear, one-clock (SimulatedClock controls fire), abort-then-resume fires on fresh silence, thread-safety stress test.
+
+**Gated modules:** `TurnTakingGate`, `SummonController`, `WallDetector` — **unchanged**.
+
+**→ qa-tuning: review T-302.** The qa brief is in the T-302 TASKS.md Notes field. This review folds in T-303's live validation (abort-on-resume + back-off on live audio).
+
+---
+
+## Prior state — 2026-06-15 (T-301 DONE → Phase 3 integration seam documented)
 
 **Phase:** phase_3 — Knowing when to speak (ACTIVE). T-301 (verify VAD↔gate one-clock invariant) is **DONE** (core-engineer, this session). Suite **270 green** (264 baseline + 6 new), ruff clean. On `main`, not pushed.
 

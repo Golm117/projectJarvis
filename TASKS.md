@@ -515,7 +515,7 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 - **Notes:** DONE (not qa-gated — verify-only + adds tests, no logic change). **One-clock invariant HOLDS.** Silence-gap confirmed as T-302 integration point. Recommended T-302 hook: `AttentionLayer.tick()` calling cached `consider_interjection` during silence; threading isolated to `live.py`. Non-deterministic back-off finding noted: use cached verdict from ingest (not a fresh model call) so offer text is stable across ticks. No defects in qa-gated modules. **T-302 picks up** with the `tick()` design from `docs/architecture/phase3-invariants.md` §3.
 
 ### T-302 — Real-time SummonController — continuous Path-B re-evaluation during silence
-- **Status:** claimed
+- **Status:** review
 - **Priority:** P0
 - **Role:** core-engineer
 - **Owner:** core-engineer
@@ -526,18 +526,54 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 - **Depends on:** T-301 ✅
 - **Description:** Implement `AttentionLayer.tick()` + a background timer in `live.py` so Path-B interjections fire *mid-conversation during silence*, not only at utterance-ingest. The `MicSource.utterances()` generator blocks during silence — so `ingest` (and therefore `SummonController.consider_interjection`) is never called while the politeness gap opens. `tick()` is the pure re-evaluation hook that a daemon thread in `live.py` calls periodically (~150–250 ms cadence) to fire the interjection once the gap clears. Based on the design from `docs/architecture/phase3-invariants.md` §3.
 - **Acceptance:**
-  - `AttentionLayer.tick()` added: re-evaluates `consider_interjection` with the cached `_pending_wall` verdict; no-op if none; clears on fire.
-  - `_pending_wall: WallVerdict | None` cached at `ingest` time (when consider_interjection returns None and is_wall is True); cleared on engagement (Path A or Path B fire).
-  - Background daemon thread in `live.py` calls `layer.tick()` at ~200 ms cadence; replaces the trailing re-check affordance (lines 238-257).
-  - Thread-safety: single `threading.Lock` in `live.py` wraps both `layer.ingest(u)` and `layer.tick()` calls; `AttentionLayer`/`SummonController` stay single-threaded pure logic.
-  - One-clock invariant preserved: `tick()` reads time only through the gate predicates.
-  - No changes to `TurnTakingGate`, `SummonController`, or `WallDetector`.
-  - Test suite ≥270 green, ruff clean.
-  - Tests pin: tick fires once after gap; fires exactly once (double-fire regression); abort-on-resume; no pending wall = no-op; engagement clears cache; staleness/replacement policy.
-  - Status `review` with qa brief; NOT marked done.
+  - `AttentionLayer.tick()` added: re-evaluates `consider_interjection` with the cached `_pending_wall` verdict; no-op if none; clears on fire. ✅
+  - `_pending_wall: WallVerdict | None` cached at `ingest` time (when consider_interjection returns None and is_wall is True); cleared on engagement (Path A or Path B fire). ✅
+  - Background daemon thread in `live.py` calls `layer.tick()` at ~200 ms cadence; replaces the trailing re-check affordance (lines 238-257). ✅
+  - Thread-safety: single `threading.Lock` in `live.py` wraps both `layer.ingest(u)` and `layer.tick()` calls; `AttentionLayer`/`SummonController` stay single-threaded pure logic. ✅
+  - One-clock invariant preserved: `tick()` reads time only through the gate predicates. ✅
+  - No changes to `TurnTakingGate`, `SummonController`, or `WallDetector`. ✅
+  - Test suite 281 green (270 baseline + 11 new), ruff clean. ✅
+  - Tests pin: tick fires once after gap; fires exactly once (double-fire regression); abort-on-resume; no pending wall = no-op; engagement clears cache; staleness/replacement policy. ✅
+  - Status `review` with qa brief; NOT marked done. ✅
 - **Progress:**
   - 2026-06-15T23:30Z — claimed; orientation complete (T-301 design doc read).
-- **Notes:** QA-GATED (changes live interjection-firing behavior — the project's success metric). Mark `review` and route to qa-tuning. qa-tuning's review folds in T-303's live validation (abort-on-resume + back-off on live audio).
+  - 2026-06-15T23:59Z — implemented `_pending_wall` + `tick()` on `AttentionLayer`; replaced trailing re-check with daemon ticker thread + lock in `live.py`; 11 new deterministic tests; 281 green; ruff clean.
+- **Notes:** **→ qa-tuning: MANDATORY REVIEW.** This task changes live interjection-firing behavior — the project's success metric. Review brief below.
+
+  **T-302 REVIEW BRIEF FOR QA-TUNING**
+
+  **What changed (files):**
+  - `src/jarvis/attention_layer.py`: added `_pending_wall: WallVerdict | None` field; updated `ingest()` to cache it; added `tick()` method; updated `_engage()` to clear it.
+  - `src/jarvis/live.py`: replaced the trailing re-check smoke-test affordance (old lines 238-257) with a real `_ticker` daemon thread + `threading.Lock`; removed unused `DEFAULT_POLITENESS_GAP_SECONDS` import; added `TICK_INTERVAL_SECONDS = 0.20` constant.
+  - `tests/test_tick_continuous_path_b.py`: 11 new deterministic tests (no mic, no model, no real clock).
+  - **No changes to `TurnTakingGate`, `SummonController`, or `WallDetector`.**
+
+  **Firing-behavior change:**
+  Previously, Path B was evaluated exactly once per utterance at ingest time. At that instant (~200 ms VAD hangover) the 2 s politeness gap has not yet elapsed, so consider_interjection always returned None on live audio. A one-shot trailing re-ingest after a real sleep was the smoke-test workaround. Now: `ingest` caches the wall verdict when consider_interjection returns None (gap not open yet, or speech resumed); a 200 ms daemon ticker calls `tick()` which re-evaluates the same cached verdict; the interjection fires on the first tick after the gap opens.
+
+  **Pending-wall clearing / staleness policy:**
+  - Set at ingest: `consider_interjection(verdict) is None AND verdict.is_wall is True`. The is_wall guard means non-wall verdicts are never cached — there is nothing to wait for.
+  - Cleared on fire (Path B via tick or ingest).
+  - Cleared on Path A engagement (summon). Rationale: once Jarvis engages on any path, the ambient half is done for this turn; the wall's context has been consumed.
+  - Replaced by newer wall at next ingest. Rationale: fresher context wins — a second wall utterance is more actionable than a stale first one.
+  - NOT cleared by a non-wall ingest. Rationale: an intervening non-wall-signal utterance does not invalidate the pending wall; the silence window after the wall-bearing utterance is still the right context for the offer.
+  - NOT cleared by abort-on-resume. Rationale: speech_resumed clears on the next on_speech_end, opening a fresh silence. The pending wall should remain so tick() can fire on the next clean silence.
+
+  **Double-fire fix (the T-204 Qwen non-deterministic offer finding):**
+  The cached-verdict design is the fix. `tick()` re-evaluates THE SAME `WallVerdict` object on every call, so `verdict.category::verdict.offer` is identical on every tick. The existing `SummonController._last_offered_signature` back-off arms on the first fire and de-dupes all subsequent ticks — no changes to the qa-gated `SummonController`. Additionally, `_pending_wall` is cleared on the first fire so subsequent ticks are no-ops before the back-off even runs (double guard).
+
+  **Threading model + lock:**
+  One `threading.Lock` (`_layer_lock`) in `run_live()` serialises all access to `layer`. The utterance-consumer loop (main thread) holds the lock around `layer.ingest(u)`. The daemon ticker thread holds the lock around `layer.tick()`. `AttentionLayer` and `SummonController` contain no locks and assume single-threaded callers. The lock lives entirely in `live.py`.
+
+  **One-clock invariant:**
+  `tick()` reads time only through `gate.politeness_gap_elapsed()` and `gate.speech_resumed()` — which are pure reads of the gate's `_silence_since` and `_now()` fields (the injected clock). No new `time.monotonic()` call is introduced anywhere. The invariant holds.
+
+  **What to validate on live audio (T-303):**
+  1. **Abort-on-resume**: speak a wall utterance, then speak again before 2 s elapses — the ticker must not fire while speech is ongoing.
+  2. **Back-off de-dupe**: same wall situation twice in a row — should not produce two identical offers (existing `SummonController` back-off; the stable cached verdict keeps the signature constant).
+  3. **No spurious fires during brief pauses**: very short pauses (<2 s) inside a sentence must not trigger the ticker (gate.politeness_gap_elapsed() is still False).
+  4. **Clean fire after 2 s**: a genuine wall followed by 2+ s of silence should produce exactly one interjection within ~200 ms of the gap opening.
+  5. **Thread cleanliness**: the ticker thread must stop cleanly at window end (ticker_stop.set() → thread.join(timeout=1.0) in the finally block).
 
 - (planned T-303) Validate abort-on-resume and back-off on live audio. [core-engineer + qa-tuning]
 - (planned T-304) Latency budget pass — gate → detector → offer within target. [core-engineer]

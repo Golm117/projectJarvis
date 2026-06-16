@@ -1,4 +1,4 @@
-"""``run_live`` — the real ambient pipeline on live audio (T-105 / T-204).
+"""``run_live`` — the real ambient pipeline on live audio (T-105 / T-204 / T-302).
 
 Phase 1 (T-105): the **real** ``AttentionLayer`` driven by a **real** ``MicSource``
 — real microphone (``SoundDeviceMicSource``) → real Silero VAD → real mlx-whisper
@@ -16,6 +16,22 @@ frozen seams for the ``--live`` path.  Backend selection:
   constructed at startup and injected into both ``QwenSummarizerBackend`` and
   ``QwenWallBackend``; the ~2 GB weights are loaded once and shared.  This is the
   real Phase-2 backend.
+
+Phase 3 (T-302): **continuous real-time Path-B re-evaluation** during silence.
+The ``MicSource.utterances()`` generator blocks on ``source.frames()`` during
+silence — ``AttentionLayer.ingest`` never runs, so Path B's
+``SummonController.consider_interjection`` is never called while the politeness gap
+grows.  A **daemon ticker thread** calls ``layer.tick()`` every
+``TICK_INTERVAL_SECONDS`` (~200 ms) throughout the listen window, allowing the wall
+interjection to fire mid-conversation once the gate's politeness gap opens.
+
+**Thread-safety model (T-302):**
+A single ``threading.Lock`` (``_layer_lock``) serialises all access to ``layer``:
+* The utterance-consumer thread (the ``for u in mic_source.utterances()`` loop)
+  holds the lock around each ``layer.ingest(u)`` call.
+* The ticker thread holds the lock around each ``layer.tick()`` call.
+``AttentionLayer`` and ``SummonController`` stay single-threaded pure logic — the
+lock lives here in ``live.py``, not in the core modules.
 
 The ``AttentionLayer.build`` signature already accepts ``summarizer_backend`` and
 ``wall_backend`` keyword arguments; this module passes the right pair based on the
@@ -50,14 +66,17 @@ from collections.abc import Callable
 
 from jarvis.adapters.engaged import PrintResponder, PrintVoice
 from jarvis.attention_layer import AttentionLayer
-from jarvis.core.turn_taking_gate import DEFAULT_POLITENESS_GAP_SECONDS, TurnTakingGate
+from jarvis.core.turn_taking_gate import TurnTakingGate
 from jarvis.types import EngagementHandoff, Interjection, Utterance
 
 DEFAULT_LISTEN_SECONDS = 12.0
 
-# How long the Path-B trailing re-check waits for real silence to open the gate's
-# politeness gap (the gate's default ~2 s, used by run_live's smoke-test affordance).
-POLITENESS_GAP_SETTLE = DEFAULT_POLITENESS_GAP_SECONDS
+# T-302: cadence of the background ticker thread that calls layer.tick() during
+# silence.  200 ms gives ~10 ticks per politeness gap (2 s) — responsive without
+# busy-polling.  Chosen to be well under the gap yet not tight enough to spin-waste
+# a core; the actual fire latency is at most TICK_INTERVAL_SECONDS after the gap
+# opens, which is negligible vs the 2 s gap itself.
+TICK_INTERVAL_SECONDS = 0.20
 
 
 def _say_async(text: str, delay: float = 1.0) -> threading.Thread:
@@ -207,6 +226,29 @@ def run_live(
 
     mic = mic_factory() if mic_factory is not None else SoundDeviceMicSource(device=device)
     say_thread: threading.Thread | None = None
+
+    # T-302: one lock serialises layer.ingest() (utterance thread) and
+    # layer.tick() (ticker thread) so AttentionLayer stays single-threaded.
+    _layer_lock = threading.Lock()
+
+    ticker_stop = threading.Event()
+
+    def _ticker() -> None:
+        """Background daemon: calls layer.tick() at TICK_INTERVAL_SECONDS cadence.
+
+        Runs for the entire listen window.  A separate stop event (``ticker_stop``)
+        lets the main thread halt it cleanly before the function returns.  The lock
+        ensures tick() and ingest() never interleave.
+        """
+        while not ticker_stop.is_set():
+            ticker_stop.wait(TICK_INTERVAL_SECONDS)
+            if ticker_stop.is_set():
+                break
+            with _layer_lock:
+                layer.tick()
+
+    ticker_thread = threading.Thread(target=_ticker, daemon=True, name="jarvis-ticker")
+
     try:
         mic.start()  # type: ignore[attr-defined]  # opens the device (permission prompt)
         if say_text:
@@ -223,39 +265,34 @@ def run_live(
         stopper.daemon = True
         stopper.start()
 
+        # T-302: start the ticker *after* the mic is up so the first tick sees a
+        # live gate (not the cold initial state).
+        ticker_thread.start()
+
         target = stop_after_text.lower() if stop_after_text else None
-        last: Utterance | None = None
         for u in mic_source.utterances():
             on_utterance(u)
-            layer.ingest(u)
-            last = u
+            with _layer_lock:
+                layer.ingest(u)
             if target is not None and target in u.text.lower():
                 break  # clean stop on the wall-bearing line (leave the gate armed)
             if time.monotonic() >= deadline:
                 break
+
+        # T-302: the real continuous loop keeps ticking after the utterance loop
+        # ends (e.g. stop_after_text hit) so Path B can still fire during the
+        # trailing silence.  We let it run until the listen window expires.
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(remaining)
+
         mic.stop()  # type: ignore[attr-defined]  # no more capture → no trailing junk
 
-        # --- Path-B trailing re-check (smoke-test affordance) ----------------
-        # The v0 orchestrator evaluates Path B once, at an utterance's ingest —
-        # but at that instant only the VAD's ~200 ms endpoint hangover of silence
-        # has passed, never the gate's ~2 s politeness gap, so a live interjection
-        # can't fire from a *single* per-utterance pass. (Re-evaluating Path B
-        # continuously as silence accumulates is the Phase-3 real-time
-        # SummonController, T-302.) To show the interjection path firing on *live*
-        # audio here, we stop capturing on the wall line, let real silence elapse
-        # (no new speech, so the gate's silence timer keeps growing from that
-        # line's speech-end), and re-ingest it once the politeness gap has opened.
-        # This uses only the public ``ingest`` and the same gate — it does not
-        # reach into orchestrator internals or fabricate anything.
-        from jarvis.attention_layer import WAKE_WORD
-
-        last_was_summon = last is not None and WAKE_WORD in last.text.lower()
-        if last is not None and not last_was_summon and not gate.speech_resumed():
-            time.sleep(POLITENESS_GAP_SETTLE + 0.3)  # let the ~2 s gap open for real
-            if gate.politeness_gap_elapsed():
-                print("   [trailing silence >= politeness gap — re-checking Path B]")
-                layer.ingest(last)
     finally:
+        # Signal the ticker to stop and wait for it to exit cleanly.
+        ticker_stop.set()
+        if ticker_thread.is_alive():
+            ticker_thread.join(timeout=1.0)
         mic.stop()  # type: ignore[attr-defined]
         if say_thread is not None:
             say_thread.join(timeout=1.0)
