@@ -18,6 +18,24 @@ Keep entries short. One paragraph per field is plenty. If it takes more, it prob
 
 ---
 
+## 2026-06-15 — ASR runtime: mlx-whisper (base.en) over whisper.cpp (T-101 spike)
+
+**Decided by:** Claude Code (sensing-engineer) — T-101 spike
+**Status:** accepted
+**Context:** The approved stack deferred the local ASR runtime to a Phase-1 spike — mlx-whisper vs whisper.cpp — to be settled empirically on the actual M5 rather than guessed. T-101 benchmarked both on this machine (Apple M5 Pro, 64 GB) at the `base.en` model: latency/RTF, WER on a known synthesized reference clip, isolated memory, and a 40× single-session sustained-load read. Full methodology + numbers in `docs/audio/asr-spike.md`.
+**Decision:** Use **`mlx-whisper` at `base.en`** as the Phase-1 ASR runtime (English-only; the single English-speaking developer is the v0 user), with **`small.en` as the documented upgrade lever** and **whisper.cpp (`pywhispercpp`) as the documented fallback**. The runtime sits behind the frozen `TranscriptSource` seam, feeding `MicSource` (T-104).
+**Rationale:** Latency and accuracy were effectively **tied** at `base.en` — both runtimes are ~25–125× faster than real time (short ~3.8 s utterance: mlx 73 ms / whisper.cpp 52 ms; both negligible against the ~2 s offer-to-help budget) and both scored 0.0 % WER on clean short speech / 1.7 % on a 17 s paragraph. The deciding factor is **runtime strategy**: mlx-whisper runs on **MLX/Metal/unified-memory — the same accelerator stack Qwen2.5 will use in Phase 2** — so the always-on ambient half standardizes on **one** local-inference stack to budget and profile, rather than MLX plus a second ggml/Metal runtime. mlx is also maintained Apple-Silicon-first (whisper.cpp's ggml build on this M5 couldn't use the newest tensor API and fell back). `base.en` is chosen to **leave the most M5 headroom for the SLM** (the real always-on cost center). whisper.cpp was marginally faster and leaner (326 MB vs 463 MB RSS, no torch dep) — kept as the fallback, but ~15 ms doesn't justify a second inference runtime.
+**Alternatives considered:** whisper.cpp/`pywhispercpp` as primary (rejected as primary, kept as fallback — faster/leaner but a separate runtime from the MLX SLM; the speed edge is irrelevant at this budget). `tiny.en` (rejected — saves negligible latency for an accuracy cost). `small.en` now (deferred — only move up if captured-audio WER demands it *and* the combined ASR+SLM budget still clears). The other approved-stack alternatives (`faster-whisper`, Moonshine, Parakeet) were not benchmarked — out of scope for the two-candidate spike; revisit only if both candidates fail in the wild. **⚠️ Open coexistence item:** this spike measured ASR in isolation; the **ASR + Qwen2.5 concurrent always-on budget** must be measured jointly with local-ml-engineer before model sizes freeze on either side (flagged in `asr-spike.md`).
+
+## 2026-06-15 — Spike/heavy deps go in an isolated `asr-spike` uv group, not core deps (T-101)
+
+**Decided by:** Claude Code (sensing-engineer) — T-101
+**Status:** accepted
+**Context:** The T-101 ASR spike needs heavy packages (`mlx-whisper` pulls `mlx`, `mlx-metal`, `torch`, `numpy`, `scipy`, `numba`…; plus `pywhispercpp`). The `jarvis` package's runtime `dependencies` are still empty, and the always-on package shouldn't carry a benchmark's transitive weight before `MicSource` (T-104) pins exactly what it needs. The approved-stack/dependency policy also wants new deps recorded with rationale.
+**Decision:** Spike and not-yet-wired heavy dependencies are added to a **named, isolated uv dependency group** (`uv add --group asr-spike <pkg>`), kept out of `[project.dependencies]` and the `dev` group. They install only with `uv run --group asr-spike …`. When `MicSource` (T-104) lands, it promotes **only** the chosen runtime (`mlx-whisper`) into the package's real dependencies; the fallback (`pywhispercpp`) and the benchmark-only extras stay in the spike group or are dropped.
+**Rationale:** Keeps the core package's dependency surface honest and minimal (the src-layout / clean-import discipline from the T-001 toolchain decision), makes the spike reproducible (`uv run --group asr-spike python …`) without polluting the default env, and defers the real dependency commitment to the task that actually wires the runtime in. Recorded here per the dependency policy.
+**Alternatives considered:** Add the packages to `[project.dependencies]` directly (rejected — commits the package to torch/mlx before `MicSource` exists and bloats every install). A throwaway venv outside uv (rejected — not reproducible from the project, fights the uv-managed-toolchain decision). The `dev` group (rejected — these aren't dev tooling like pytest/ruff; a purpose-named group documents intent).
+
 ## 2026-06-16 — ScriptedSource carries inter-line timing and drives the gate + clock (T-008)
 
 **Decided by:** Claude Code (core-engineer) — T-008

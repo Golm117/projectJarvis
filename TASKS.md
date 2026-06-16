@@ -261,20 +261,22 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 - **Notes:** **DONE — interjection-precision eval spec landed.** Fixture = a monotonic timeline (utterance / speech_start / speech_end) + per-candidate ground-truth (wall, WallCategory, useful|false, match-window) + a `config` block of the 3 thresholds T-503 sweeps. **precision = useful ÷ total Path-B fires**; Path-A summons and `None` decisions excluded; a fire matches a candidate by time window and must be the right category to score "useful". Runs deterministically on the `SimulatedClock` + `FakeWallBackend` (and `ScriptedSource`/fakes once T-008 lands). The yardstick the MVP is judged against. **Phase 0 now has one task left: T-008.**
 
 ### T-101 — ASR runtime spike: mlx-whisper vs whisper.cpp on the M5
-- **Status:** claimed
+- **Status:** done
 - **Priority:** P1
 - **Role:** sensing-engineer (+ local-ml-engineer for the joint M5-budget read)
 - **Owner:** sensing-engineer
 - **Phase:** 1
 - **Created:** 2026-06-15T00:00:00Z
 - **Claimed:** 2026-06-15T00:00:00Z
-- **Completed:** —
+- **Completed:** 2026-06-15T00:00:00Z
 - **Depends on:** —
 - **Description:** Empirically pick the local ASR runtime for the always-on ambient path. Benchmark the two approved candidates — **mlx-whisper** (Apple-Silicon/MLX native) and **whisper.cpp** (via the `pywhispercpp` binding / Core ML) — on THIS machine (Apple M5 Pro, 18 cores, 64 GB) at a comparable small/base model size. Measure (1) transcription latency — wall-clock per representative clip and, if feasible, a chunked/streaming figure — related to the wedge's ~2 s offer-to-help budget; (2) accuracy — WER (or a qualitative transcript comparison) against a known reference clip; (3) CPU/memory and, as far as observable in one session, sustained-load/thermal behavior (a cold one-shot lies — note any throttling over a short repeated run). The runtime feeds `MicSource` (T-104) behind the frozen `TranscriptSource` seam and must leave M5 headroom for Qwen2.5 (Phase 2) under always-on load.
 - **Acceptance:** `docs/audio/asr-spike.md` contains the methodology, the audio sample used (stated exactly, with provenance), a measured comparison table (latency / accuracy / CPU-mem / sustained behavior), and a clear recommendation (runtime + model size + why). A `DECISIONS.md` entry records the choice (or "deferred — blocked"), evidence, and alternatives. Any new dep recorded per the dependency policy. If both runtimes are genuinely un-runnable (no network / install blocked), the task is `blocked` with a clear note — no fabricated numbers.
 - **Progress:**
   - 2026-06-15 — claimed; expanded from the Phase-1 one-liner placeholder.
-- **Notes:** Claimed. Spike in progress — see `docs/audio/asr-spike.md` (living deliverable).
+  - 2026-06-15 — env confirmed runnable (network up, uv + brew present, M5 Pro / 64 GB). Installed `mlx-whisper` + `pywhispercpp` into an isolated `asr-spike` uv group. Synthesized two reference clips (macOS `say` → 16 kHz mono WAV; exact ground truth). Benchmarked both at `base.en`: latency/RTF (5 warm runs), WER, isolated peak RSS, 40× sustained-drift. Both ran; nothing blocked, nothing fabricated.
+  - 2026-06-15 — wrote `docs/audio/asr-spike.md` (method + comparison table + recommendation), two DECISIONS.md entries (runtime choice + dep-group policy). DONE.
+- **Notes:** **DONE.** Recommendation: **mlx-whisper, `base.en`** (English-only; `small.en` = upgrade lever; whisper.cpp/`pywhispercpp` = fallback). Both runtimes are ~25–125× faster than real time and **tie on WER** at `base.en` — choice decided by runtime strategy: mlx-whisper shares the **MLX/Metal/unified-memory** stack Qwen2.5 will use (Phase 2), so one accelerator stack to budget. Short ~3.8 s utterance: mlx 73 ms / whisper.cpp 52 ms — both negligible vs the ~2 s offer budget. Isolated RSS: mlx 463 MB / whisper.cpp 326 MB. No throttling over a 40× single-session run (NOT a multi-hour soak — that's T-504). **⚠️ Coexistence flag:** measured ASR in isolation — the **ASR + Qwen2.5 concurrent always-on budget** must be measured jointly with local-ml-engineer before either side freezes model sizes. **Phase 1 picks up:** T-102 (mic capture loop) / T-104 (`MicSource`) — wire `mlx-whisper base.en` behind `TranscriptSource`. Spike deps live in the `asr-spike` uv group; T-104 promotes only `mlx-whisper` into real package deps. See `docs/audio/asr-spike.md`.
 
 ---
 

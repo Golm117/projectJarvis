@@ -25,6 +25,10 @@ packages = ["src/jarvis"]
 
 # --- uv: dependency groups (preferred workflow) -----------------------------
 [dependency-groups]
+asr-spike = [
+    "mlx-whisper>=0.4.3",
+    "pywhispercpp>=1.5.0",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",

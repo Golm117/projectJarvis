@@ -17,7 +17,27 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-16 (T-008 done → PHASE 0 COMPLETE)
+## Current state — 2026-06-15 (T-101 done → Phase 1 ASR runtime selected)
+
+**Phase:** phase_1 — Real ears (kicked off). **T-101 (ASR runtime spike) is DONE** (sensing-engineer, this session).
+
+**Outcome:** **ASR runtime = `mlx-whisper`, model `base.en`** (English-only; `small.en` is the upgrade lever, `whisper.cpp`/`pywhispercpp` is the documented fallback). Benchmarked both candidates on THIS M5 Pro (64 GB) at `base.en` — full method + comparison table + recommendation in **`docs/audio/asr-spike.md`**; two DECISIONS.md entries (runtime choice + spike-dep policy).
+
+**What the spike found:**
+- Both runtimes are **~25–125× faster than real time** and **tie on WER** at `base.en` (0.0 % clean short utterance / 1.7 % on a 17 s paragraph — the lone "error" is a "three"/"3" normalization artifact). A realistic ~3.8 s utterance transcribes in **mlx 73 ms / whisper.cpp 52 ms** — negligible vs the **~2 s offer-to-help budget**. ASR is **not** the budget bottleneck; the VAD endpoint wait + the SLM are.
+- **Decided on runtime strategy, not speed/accuracy:** mlx-whisper runs on **MLX/Metal/unified-memory — the same stack Qwen2.5 uses (Phase 2)** — so the ambient half standardizes on one accelerator stack to budget. whisper.cpp was marginally faster/leaner (RSS 326 vs 463 MB, no torch dep) → kept as fallback only.
+- **No throttling** over a 40× single-session run (this is NOT a multi-hour soak — that's T-504).
+- **Honesty caveats:** accuracy measured on clean *synthesized* audio (best case) — re-measure WER on captured noisy audio in Phase 5 (T-502). Streaming/combined-budget not measured here.
+
+**Dependency policy applied:** spike packages (`mlx-whisper`, `pywhispercpp` + transitive torch/mlx) went into an **isolated `asr-spike` uv group** (`uv add --group asr-spike …`), NOT the package's runtime deps. Run the spike with `uv run --group asr-spike …`. **T-104 (`MicSource`) promotes only `mlx-whisper` into real package deps.**
+
+**⚠️ Coexistence flag for local-ml-engineer (joint spike):** this measured ASR in isolation. The real constraint is **ASR + Qwen2.5 running concurrently always-on** on one M5 — measure combined latency / memory / GPU contention / sustained thermal **before either side freezes model sizes**. `base.en` was chosen to leave the SLM the most headroom. (See `asr-spike.md` §coexistence.)
+
+**→ Phase 1 picks up:** **T-102 (always-on mic capture loop)** and **T-103 (Silero VAD gating)**, then **T-104 (`MicSource`)** wiring `mlx-whisper base.en` behind the **frozen `TranscriptSource` seam** — feeding real `Utterance` events (ts stamped from the VAD timeline) and driving the same `TurnTakingGate` with real VAD edges + a real `time.monotonic` clock. The orchestrator + gate don't change for the swap. Did NOT push (working on `main`).
+
+---
+
+## Prior state — 2026-06-16 (T-008 done → PHASE 0 COMPLETE)
 
 **Phase:** phase_0 — Foundations → **COMPLETE.** Phase 1 (Real ears) is next.
 
