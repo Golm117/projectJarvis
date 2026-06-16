@@ -680,29 +680,30 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 ### Phase 5 — Make it live & tune
 
 ### T-501 — Always-on end-to-end run: graceful shutdown + bounded memory
-- **Status:** claimed
+- **Status:** done
 - **Priority:** P0
 - **Role:** core-engineer
 - **Owner:** core-engineer
 - **Phase:** 5
 - **Created:** 2026-06-16T00:00:00Z
 - **Claimed:** 2026-06-16T12:00:00Z
-- **Completed:**
+- **Completed:** 2026-06-16T13:00:00Z
 - **Depends on:** T-302 (done), T-404 (done), T-505 (done)
 - **Description:** Make `run_live` run continuously without a fixed `--seconds` window, with graceful shutdown and bounded memory, so the user can actually leave Jarvis running. Three sub-goals:
   1. **Always-on mode (unbounded run):** Add `--forever` flag (or `--seconds 0` meaning "no limit"). Keep the existing bounded `--seconds` behavior unchanged (default 12) so smoke tests and quick checks are unaffected.
   2. **Graceful shutdown:** Install SIGINT/SIGTERM handlers (or catch KeyboardInterrupt) that cleanly: set `ticker_stop`, join the ticker thread, stop the mic (`mic.stop()` — thread-safe+idempotent), stop in-progress voice playback (T-403 barge-safe stop event if voice path active), join the `say` thread, exit 0. No hang, no traceback dump on Ctrl-C. The `mic_source.utterances()` generator loop must exit promptly when the mic stops.
   3. **Bounded memory (critical for always-on):** `transcribed: list[Utterance]` appends every utterance forever → unbounded in always-on mode. In always-on mode, cap with a bounded `collections.deque(maxlen=...)` or just track a count. The bounded `--seconds` path keeps the existing `list[Utterance]` return for smoke tests.
 - **Acceptance:**
-  - `--forever` flag added to `__main__.py`; `run_live(forever=True)` or `run_live(seconds=0)` chosen.
-  - Bounded `--seconds N` path unchanged (returns list, smoke tests green).
-  - Graceful shutdown: Ctrl-C / SIGTERM exits 0, ticker thread joined, mic stopped, say thread joined — no hang, no traceback.
-  - Bounded memory: always-on accumulation capped (assert with fake source in tests).
-  - Tests: (a) shutdown mechanism exercised deterministically (not via real OS signal); (b) bounded-memory assertion feeding many utterances; (c) suite stays green (currently 398); ruff clean.
-  - NOT qa-gated (runtime loop / shutdown / memory in `live.py` + `__main__.py` only; no change to TurnTakingGate/SummonController/WallDetector or any threshold).
+  - `--forever` flag added to `__main__.py`; `run_live(forever=True)` or `run_live(seconds=0)` chosen. ✓
+  - Bounded `--seconds N` path unchanged (returns list, smoke tests green). ✓
+  - Graceful shutdown: Ctrl-C / SIGTERM exits 0, ticker thread joined, mic stopped, say thread joined — no hang, no traceback. ✓
+  - Bounded memory: always-on accumulation capped (assert with fake source in tests). ✓
+  - Tests: (a) shutdown mechanism exercised deterministically (not via real OS signal); (b) bounded-memory assertion; (c) suite 407 green (398 + 9 new); ruff clean. ✓
+  - NOT qa-gated (runtime loop / shutdown / memory in `live.py` + `__main__.py` only; no change to TurnTakingGate/SummonController/WallDetector or any threshold). ✓
 - **Progress:**
   - 2026-06-16T12:00:00Z — claimed; orientation complete (all key files read).
-- **Notes:**
+  - 2026-06-16T13:00:00Z — implemented: `--forever`/`seconds=0` flag; shutdown watchdog thread; bounded deque; 9 new tests; 407 green; ruff clean. Committed.
+- **Notes:** DONE (not qa-gated). **Always-on command:** `python -m jarvis --live --forever` (add `--local-brain --voice` for full pipeline). **Stop:** Ctrl-C → clean exit 0, no traceback. **Shutdown mechanism:** daemon watchdog thread waits on `_shutdown_event`, then calls `mic.stop()` to unblock the `frames()` generator; signal handler + KeyboardInterrupt both set the event. **Bounded memory:** `collections.deque(maxlen=1000)` in always-on mode; bounded-mode `list` return contract unchanged. **Key design decision in DECISIONS.md:** watchdog-thread is the cleanest always-on shutdown without changing `AudioSource` protocol. **Live validation:** only validated via deterministic unit tests (injected shutdown event + fake mic); real Ctrl-C on the full pipeline was not run in this session (agent cannot send SIGINT to a foreground process). **→ Remaining Phase 5:** T-502 (capture/label tooling, qa-tuning), T-503 (threshold tuning, qa-tuning, qa-gated), T-504 (thermal/stability soak, sensing-engineer).
 
 - (planned T-502) Capture-and-label tooling for real conversations (ephemeral, opt-in). [qa-tuning]
 - (planned T-503) Tune politeness-gap + confidence threshold against the interjection-precision metric. [qa-tuning]

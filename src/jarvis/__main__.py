@@ -45,7 +45,17 @@ def main(argv: list[str] | None = None) -> int:
         "--seconds",
         type=float,
         default=12.0,
-        help="(--live) how long to listen before stopping (default 12)",
+        help="(--live) how long to listen before stopping (default 12); "
+        "0 = always-on (same as --forever)",
+    )
+    parser.add_argument(
+        "--forever",
+        action="store_true",
+        default=False,
+        help="(--live) run continuously until Ctrl-C / SIGTERM — no time limit. "
+        "Graceful shutdown: ticker thread joined, mic stopped, exit 0. "
+        "Memory is bounded (last %(const)s utterances retained).",
+        const="1000",  # just for the help text substitution above
     )
     parser.add_argument(
         "--say",
@@ -127,6 +137,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         run_live(
             seconds=args.seconds,
+            forever=args.forever,
             say_text=args.say,
             device=device,
             stop_after_text=args.stop_after,

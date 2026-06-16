@@ -18,6 +18,20 @@ Keep entries short. One paragraph per field is plenty. If it takes more, it prob
 
 ---
 
+## 2026-06-16 — Always-on mode: --forever flag, shutdown watchdog, bounded deque (T-501)
+
+**Decided by:** Claude Code (core-engineer) — T-501
+**Status:** accepted
+**Context:** `run_live` previously only supported a bounded `--seconds N` window (default 12 s), which is a smoke-test affordance, not a real always-on process. T-501 makes Jarvis actually runnable indefinitely.
+**Decision:** Three changes to `live.py` + `__main__.py`:
+1. **`--forever` flag** (or `seconds=0` alias): activates always-on mode; no timer/deadline; loop runs until shutdown signal. Bounded `--seconds N` path is unchanged (still returns `list[Utterance]` for smoke tests).
+2. **Graceful shutdown via `_shutdown_event` + watchdog thread**: a SIGINT/SIGTERM signal handler sets a `shutdown_event`; a daemon watchdog thread watches the event and calls `mic.stop()` to unblock the `frames()` generator (which is blocked on audio input during silence). Without the watchdog, setting the event while the utterance loop is blocked inside `MicSource.utterances()` would never be noticed (the event is only checked between utterances). The watchdog is the always-on analogue of the bounded-mode stopper timer. Signal handlers are restored on exit. `KeyboardInterrupt` is also caught explicitly.
+3. **Bounded deque for always-on accumulation**: `transcribed: list[Utterance]` (unbounded) replaced with `collections.deque(maxlen=FOREVER_DEQUE_MAXLEN)` in always-on mode. `FOREVER_DEQUE_MAXLEN=1000` caps memory at ~83 min of tail at 1 utterance/5 s cadence. Bounded mode keeps the `list` and its return contract.
+**Rationale:** The watchdog-thread design is the cleanest way to bridge the gap between "signal arrives while blocked on audio" and "the utterance loop checks for shutdown". The alternative (polling the shutdown event on a tight loop inside `frames()` at the `FakeMicSource` level) would require changes to `SoundDeviceMicSource` and the `AudioSource` protocol. The watchdog is purely in `live.py` with zero core-module changes. The deque cap is the simplest bounded container; 1000 entries is a round number with comfortable margin.
+**Alternatives considered:** `seconds=0` as the only always-on signal (rejected — `--forever` is clearer intent; `seconds=0` is an alias for compatibility). Polling the shutdown event in `SoundDeviceMicSource.frames()` (rejected — would require `AudioSource` protocol change and crosses the scope boundary into sensing-engineer territory). TTL on the deque (rejected — `collections.deque(maxlen=N)` is already TTL by count; time-based TTL adds complexity for negligible benefit).
+
+---
+
 ## 2026-06-16 — ASR upgraded from base.en to small.en; lexical segment filter added (T-505)
 
 **Decided by:** Claude Code (sensing-engineer) — T-505

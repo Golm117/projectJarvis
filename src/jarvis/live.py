@@ -1,4 +1,4 @@
-"""``run_live`` — the real ambient pipeline on live audio (T-105 / T-204 / T-302 / T-404).
+"""``run_live`` — the real ambient pipeline on live audio (T-105 / T-204 / T-302 / T-404 / T-501).
 
 Phase 1 (T-105): the **real** ``AttentionLayer`` driven by a **real** ``MicSource``
 — real microphone (``SoundDeviceMicSource``) → real Silero VAD → real mlx-whisper
@@ -33,7 +33,31 @@ call); a no-op ``PrintVoice`` is passed as the ``VoiceOutput`` (since speaking i
 already done inside ``respond()``).  Default stays ``PrintResponder``/``PrintVoice``
 (no keys needed) so ``--live`` without ``--voice`` remains model-free.
 
-**Thread-safety model (T-302):**
+Phase 5 (T-501): **always-on mode + graceful shutdown + bounded memory.**
+Two run modes exist:
+
+* **Bounded (default):** ``--seconds N`` (default 12) — the original smoke-test
+  window.  A ``threading.Timer`` stops the mic after ``N`` seconds.  The function
+  returns the full list of transcribed ``Utterance`` objects (the existing smoke-test
+  contract).  Unchanged from pre-T-501.
+* **Always-on:** ``--forever`` (or ``seconds=0``) — no timer, no deadline.  The
+  loop runs until a shutdown signal (SIGINT / SIGTERM / ``KeyboardInterrupt``).  A
+  shutdown event (``_shutdown_event``) is set by the signal handler; the utterance
+  loop checks it and exits; the finally block joins the ticker and mic.
+  Utterances are accumulated in a bounded ``deque`` (``FOREVER_DEQUE_MAXLEN``)
+  rather than a growing list, so memory is capped even over a multi-hour run.
+  The function returns ``None`` (no accumulation contract for the always-on path).
+
+**Graceful shutdown (always-on path):**
+SIGINT and SIGTERM are caught in a signal handler that sets ``_shutdown_event``.
+``KeyboardInterrupt`` (a Ctrl-C before the signal handler fires in the utterance
+loop) is caught explicitly in ``run_live`` and treated the same way.  The
+shutdown sequence — set event → ticker stop → mic stop → say thread join — runs
+inside the ``finally`` block whether shutdown came from a signal, a KeyboardInterrupt,
+or the normal window end.  The process exits 0 with a clean ``[live] stopping …``
+message and no traceback.
+
+**Thread-safety model (T-302, unchanged):**
 A single ``threading.Lock`` (``_layer_lock``) serialises all access to ``layer``:
 * The utterance-consumer thread (the ``for u in mic_source.utterances()`` loop)
   holds the lock around each ``layer.ingest(u)`` call.
@@ -47,9 +71,7 @@ flag.  Zero core module changes.
 
 Unlike the mock demo (``jarvis.demo``), this runs in **real time** on a real
 ``time.monotonic`` clock — the gate's settle / politeness gaps elapse against the
-wall clock, and the VAD stamps each ``Utterance.ts`` from the audio timeline. It
-captures for a bounded window (``seconds``) and then stops, so it is a *smoke
-test*, not a forever-loop (that's Phase 5, T-501).
+wall clock, and the VAD stamps each ``Utterance.ts`` from the audio timeline.
 
 ## Generating speech without a human (the `say` loopback)
 
@@ -66,7 +88,9 @@ lazily, so ``uv run pytest`` stays green and CI never touches a microphone.
 
 from __future__ import annotations
 
+import collections
 import contextlib
+import signal
 import subprocess
 import threading
 import time
@@ -85,6 +109,14 @@ DEFAULT_LISTEN_SECONDS = 12.0
 # a core; the actual fire latency is at most TICK_INTERVAL_SECONDS after the gap
 # opens, which is negligible vs the 2 s gap itself.
 TICK_INTERVAL_SECONDS = 0.20
+
+# T-501: bounded accumulation cap for the always-on path.
+# In always-on mode the `transcribed` list is replaced with a bounded deque of this
+# size.  Only the most recent N utterances are retained — enough to reconstruct the
+# tail of any conversation session without growing without bound.
+# At a generous 1 utterance / 5 s cadence, 1000 utterances ≈ ~83 minutes of tail.
+# The bounded `--seconds` path is unaffected (still uses a plain list).
+FOREVER_DEQUE_MAXLEN = 1000
 
 
 def _say_async(text: str, delay: float = 1.0) -> threading.Thread:
@@ -154,6 +186,7 @@ def _build_local_brain_backends() -> tuple[object, object]:
 def run_live(
     *,
     seconds: float = DEFAULT_LISTEN_SECONDS,
+    forever: bool = False,
     say_text: str | None = None,
     device: int | str | None = None,
     stop_after_text: str | None = None,
@@ -161,47 +194,46 @@ def run_live(
     mic_factory: Callable[[], object] | None = None,
     local_brain: bool = False,
     real_voice: bool = False,
-) -> list[Utterance]:
-    """Run the real ambient pipeline on live mic audio for a bounded window.
+    _shutdown_event: threading.Event | None = None,
+) -> list[Utterance] | None:
+    """Run the real ambient pipeline on live mic audio.
 
-    Wires ``AttentionLayer`` to a real ``MicSource`` over a
-    ``SoundDeviceMicSource``, capturing for ``seconds`` and printing every
-    transcript line + emitted event. If ``say_text`` is given, it is spoken
-    through the macOS ``say`` command (the human-free loopback) while the mic
-    listens.
+    Two modes:
+
+    **Bounded mode** (default, ``forever=False``): captures for ``seconds`` and
+    stops.  Returns the list of ``Utterance`` objects transcribed.  The smoke tests
+    and quick checks use this mode.  ``seconds=0`` is treated as ``forever=True``.
+
+    **Always-on mode** (``forever=True`` or ``seconds=0``): runs indefinitely until
+    a shutdown signal (SIGINT / SIGTERM / ``KeyboardInterrupt``).  Installs a signal
+    handler for the duration of the call that sets a shutdown event, then uninstalls
+    it on exit.  Utterances are kept in a bounded ``deque`` of
+    ``FOREVER_DEQUE_MAXLEN`` entries to cap memory for multi-hour runs.  Returns
+    ``None`` (the caller has no meaningful accumulation to inspect).
 
     Args:
-        seconds: how long to capture before stopping.
+        seconds: how long to capture before stopping (bounded mode).  ``0`` means
+            always-on (treated as ``forever=True``).
+        forever: if ``True``, run until signalled — no timer.
         say_text: text to speak via ``say`` for the loopback (``None`` = a human
             speaks).
         device: the PortAudio input device id/name to capture from (``None`` =
-            system default input). For the human-free ``say`` loopback a virtual
-            audio cable (e.g. ``BlackHole 2ch``) gives a clean digital path with no
-            acoustic echo — pass its device index here and route ``say``'s output to
-            it (the smoke-test doc explains the wiring).
+            system default input).
         stop_after_text: if given, stop capturing the moment a transcribed
             utterance contains this substring (case-insensitive). Used by the
-            Path-B smoke test to end capture cleanly on the wall-bearing line, so
-            the trailing-silence re-check (below) sees that line as the window's
-            last line instead of a later stray segment.
+            Path-B smoke test to end capture cleanly on the wall-bearing line.
         now: the gate's clock (default ``time.monotonic`` — real time).
         mic_factory: builds the real mic source (default a ``SoundDeviceMicSource``);
-            injectable so a harness could substitute one. The mic deps are imported
-            lazily here, never at module import.
-        local_brain: if ``True``, wire the real Qwen2.5/MLX summarizer and wall
-            backends (one shared ``QwenModel`` instance, weights loaded once on the
-            first inference call).  If ``False`` (default), use the heuristic mock
-            backends — no model load, suitable for the quick sanity-check use of
-            ``--live`` without the SLM.
-        real_voice: if ``True``, wire the real Claude + ElevenLabs voice adapters
-            via ``VoiceSession`` (reads ``ANTHROPIC_API_KEY`` + ``ELEVENLABS_API_KEY``
-            from the environment — ``load_dotenv()`` is called here before the session
-            is built).  If ``False`` (default), use the print stand-ins — no API keys
-            needed.
+            injectable so a harness could substitute one.
+        local_brain: if ``True``, wire the real Qwen2.5/MLX backends.
+        real_voice: if ``True``, wire the real Claude + ElevenLabs voice adapters.
+        _shutdown_event: injectable shutdown event for tests.  In production this is
+            created internally; in tests a caller can pre-create one and set it to
+            trigger shutdown without sending a real OS signal.
 
-    Returns the list of ``Utterance`` the pipeline transcribed (for the caller to
-    report on). Raises the typed mic errors (``MicPermissionError`` /
-    ``NoInputDeviceError``) if the mic can't be opened — never fabricates audio.
+    Returns:
+        In bounded mode: the list of ``Utterance`` transcribed.
+        In always-on mode: ``None``.
     """
     # T-404: load .env so ANTHROPIC_API_KEY / ELEVENLABS_API_KEY are in the
     # environment before the voice session is built.  No-op if .env is absent.
@@ -212,14 +244,35 @@ def run_live(
 
     load_dotenv()
 
+    # T-501: seconds=0 is an alias for forever=True.
+    if seconds == 0:
+        forever = True
+
     if now is None:
         now = time.monotonic
     gate = TurnTakingGate(now)
 
-    transcribed: list[Utterance] = []
+    # T-501: bounded mode uses a plain list (return contract for smoke tests);
+    # always-on mode uses a bounded deque so memory is capped.
+    if forever:
+        _transcribed_deque: collections.deque[Utterance] = collections.deque(
+            maxlen=FOREVER_DEQUE_MAXLEN
+        )
+        transcribed_list: list[Utterance] | None = None
+    else:
+        transcribed_list = []
+        _transcribed_deque = collections.deque()  # unused in bounded mode
+
+    def _record(u: Utterance) -> None:
+        """Append utterance to whichever accumulator is active."""
+        if forever:
+            _transcribed_deque.append(u)
+        else:
+            assert transcribed_list is not None
+            transcribed_list.append(u)
 
     def on_utterance(u: Utterance) -> None:
-        transcribed.append(u)
+        _record(u)
         print(f"[transcript @ {u.ts:6.2f}s] {u.speaker}: {u.text}")
 
     def on_summary(text: str) -> None:
@@ -277,10 +330,14 @@ def run_live(
 
     brain_label = "Qwen2.5-3B/MLX (local brain)" if local_brain else "MOCK heuristics"
     voice_label = "Claude claude-opus-4-8 + ElevenLabs" if real_voice else "print stand-ins"
+    if forever:
+        mode_label = "always-on (no time limit — Ctrl-C to stop)"
+    else:
+        mode_label = f"{seconds:.0f}s window"
     print("=" * 70)
     print("  Project Jarvis — LIVE ambient pipeline (real mic · Silero · mlx-whisper)")
     print(f"  Backends: {brain_label} · voice: {voice_label}")
-    print(f"  Listening for {seconds:.0f}s …")
+    print(f"  Mode: {mode_label}")
     if say_text:
         print(f'  Loopback: speaking via `say`: "{say_text}"')
     print("=" * 70)
@@ -310,7 +367,43 @@ def run_live(
 
     ticker_thread = threading.Thread(target=_ticker, daemon=True, name="jarvis-ticker")
 
+    # T-501: shutdown event — set by the signal handler or by a test harness.
+    # In always-on mode this is how the utterance loop learns to exit.
+    if _shutdown_event is None:
+        _shutdown_event = threading.Event()
+    shutdown_event = _shutdown_event  # local alias (mypy narrowing)
+
+    # T-501: signal handlers for graceful shutdown in always-on mode.
+    # We install them only for the duration of run_live and restore the originals on exit.
+    _prev_sigint = signal.getsignal(signal.SIGINT)
+    _prev_sigterm = signal.getsignal(signal.SIGTERM)
+
+    def _handle_signal(signum: int, frame: object) -> None:  # noqa: ARG001
+        """Set the shutdown event; the utterance loop will notice and exit cleanly."""
+        print(f"\n[live] received signal {signum} — stopping gracefully …")
+        shutdown_event.set()
+
+    # stopper is used only in bounded mode; declare here so finally block can
+    # reference it even if it was never created.
+    stopper: threading.Timer | None = None
+
+    # T-501 always-on shutdown watchdog: a daemon thread that waits on the
+    # shutdown_event and then calls mic.stop() to unblock the frames() generator.
+    # Without this, setting the shutdown event while the utterance loop is blocked
+    # inside MicSource.utterances() (waiting for the next speech segment) would
+    # never be noticed — the event is only checked between utterances.  Stopping
+    # the mic causes frames() to return, which causes utterances() to return, which
+    # causes the for-loop to exit naturally, and THEN the shutdown_event check after
+    # the loop is irrelevant (the loop already exited via natural termination).
+    # In bounded mode the stopper timer already plays this role.
+    _shutdown_watchdog: threading.Thread | None = None
+
     try:
+        if forever:
+            # Always-on: install signal handlers.
+            signal.signal(signal.SIGINT, _handle_signal)
+            signal.signal(signal.SIGTERM, _handle_signal)
+
         mic.start()  # type: ignore[attr-defined]  # opens the device (permission prompt)
         if say_text:
             say_thread = _say_async(say_text)
@@ -319,46 +412,93 @@ def run_live(
         # of ~9 s would look ~400000 s stale against time.monotonic). See MicSource.
         mic_source = MicSource(source=mic, gate=gate, now=now)  # type: ignore[arg-type]
 
-        deadline = time.monotonic() + seconds
-        # Stop the mic from a watchdog thread when the window elapses, which ends
-        # the frames() generator so the loop below returns.
-        stopper = threading.Timer(seconds, mic.stop)  # type: ignore[attr-defined]
-        stopper.daemon = True
-        stopper.start()
+        if not forever:
+            # Bounded mode: set a deadline and a watchdog timer to stop the mic.
+            deadline = time.monotonic() + seconds
+            stopper = threading.Timer(seconds, mic.stop)  # type: ignore[attr-defined]
+            stopper.daemon = True
+            stopper.start()
+        else:
+            # Always-on: start the shutdown watchdog that unblocks the mic on signal.
+            def _shutdown_watcher() -> None:
+                shutdown_event.wait()  # blocks until set by signal handler or test
+                mic.stop()  # type: ignore[attr-defined]  # unblocks frames() → utterances() → loop exits
+
+            _shutdown_watchdog = threading.Thread(
+                target=_shutdown_watcher, daemon=True, name="jarvis-shutdown-watchdog"
+            )
+            _shutdown_watchdog.start()
 
         # T-302: start the ticker *after* the mic is up so the first tick sees a
         # live gate (not the cold initial state).
         ticker_thread.start()
 
         target = stop_after_text.lower() if stop_after_text else None
-        for u in mic_source.utterances():
-            on_utterance(u)
-            with _layer_lock:
-                layer.ingest(u)
-            if target is not None and target in u.text.lower():
-                break  # clean stop on the wall-bearing line (leave the gate armed)
-            if time.monotonic() >= deadline:
-                break
+        try:
+            for u in mic_source.utterances():
+                on_utterance(u)
+                with _layer_lock:
+                    layer.ingest(u)
+                if target is not None and target in u.text.lower():
+                    break  # clean stop on the wall-bearing line (leave the gate armed)
+                if forever:
+                    # Always-on: check the shutdown event on every utterance.
+                    if shutdown_event.is_set():
+                        break
+                else:
+                    if time.monotonic() >= deadline:  # type: ignore[possibly-undefined]
+                        break
+        except KeyboardInterrupt:
+            # T-501: Ctrl-C before the signal handler fires (e.g. in tests or
+            # when signal handlers aren't installed).  Treat identically.
+            print("\n[live] KeyboardInterrupt — stopping gracefully …")
+            shutdown_event.set()
 
-        # T-302: the real continuous loop keeps ticking after the utterance loop
-        # ends (e.g. stop_after_text hit) so Path B can still fire during the
-        # trailing silence.  We let it run until the listen window expires.
-        remaining = deadline - time.monotonic()
-        if remaining > 0:
-            time.sleep(remaining)
+        if not forever:
+            # T-302: the real continuous loop keeps ticking after the utterance loop
+            # ends (e.g. stop_after_text hit) so Path B can still fire during the
+            # trailing silence.  We let it run until the listen window expires.
+            remaining = deadline - time.monotonic()  # type: ignore[possibly-undefined]
+            if remaining > 0:
+                time.sleep(remaining)
 
         mic.stop()  # type: ignore[attr-defined]  # no more capture → no trailing junk
 
     finally:
+        # T-501: restore original signal handlers before anything else so a second
+        # Ctrl-C during teardown raises KeyboardInterrupt normally.
+        if forever:
+            signal.signal(signal.SIGINT, _prev_sigint)
+            signal.signal(signal.SIGTERM, _prev_sigterm)
+
         # Signal the ticker to stop and wait for it to exit cleanly.
         ticker_stop.set()
         if ticker_thread.is_alive():
             ticker_thread.join(timeout=1.0)
+
+        # Ensure the mic is stopped (idempotent — safe to call again).
         mic.stop()  # type: ignore[attr-defined]
+
+        # Cancel the bounded-mode stopper timer if it's still pending.
+        if stopper is not None:
+            stopper.cancel()
+
+        # Join the always-on shutdown watchdog (it exits once mic.stop() returns,
+        # which has already been called above).
+        if _shutdown_watchdog is not None and _shutdown_watchdog.is_alive():
+            _shutdown_watchdog.join(timeout=1.0)
+
         if say_thread is not None:
             say_thread.join(timeout=1.0)
 
+    if forever:
+        n = len(_transcribed_deque)
+    else:
+        n = len(transcribed_list) if transcribed_list is not None else 0
     print("\n" + "=" * 70)
-    print(f"  Live run complete — {len(transcribed)} utterance(s) transcribed.")
+    print(f"  Live run complete — {n} utterance(s) transcribed.")
     print("=" * 70)
-    return transcribed
+
+    # Always-on mode: no accumulation contract; return None.
+    # Bounded mode: return the list for smoke-test inspection.
+    return None if forever else transcribed_list

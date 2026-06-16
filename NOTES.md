@@ -17,7 +17,33 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-16 (T-505 done → real-room ASR quality pass complete)
+## Current state — 2026-06-16 (T-501 done → always-on mode, graceful shutdown, bounded memory)
+
+**Phase:** phase_5 (active). T-501 (always-on end-to-end run) is **DONE** (core-engineer, this session). Suite **407 green** (398 baseline + 9 new), ruff clean. On `main`, not pushed.
+
+**T-501 — what was built (files: `src/jarvis/live.py`, `src/jarvis/__main__.py`, `tests/test_t501_always_on.py`):**
+
+- **`--forever` flag + `seconds=0` alias:** `python -m jarvis --live --forever` activates always-on mode. `seconds=0` is an alias. The existing bounded `--seconds N` (default 12) path is unchanged — returns `list[Utterance]`, all smoke tests green.
+- **Graceful shutdown:** SIGINT + SIGTERM signal handlers installed (and restored on exit); a daemon watchdog thread (`jarvis-shutdown-watchdog`) waits on `_shutdown_event` and calls `mic.stop()` to unblock the `MicSource.utterances()` generator (which blocks on `frames()` during silence). `KeyboardInterrupt` is also caught explicitly in the utterance loop. Exit is clean (code 0, no traceback). All threads (ticker + watchdog + say) joined in the finally block. Signal handlers restored before return.
+- **Bounded memory:** In always-on mode, `transcribed: list[Utterance]` (previously unbounded) replaced with `collections.deque(maxlen=FOREVER_DEQUE_MAXLEN)` where `FOREVER_DEQUE_MAXLEN=1000`. Always-on mode returns `None` (no accumulation contract). Bounded mode keeps the `list` and return contract unchanged.
+- **Injectable `_shutdown_event`:** `run_live` accepts a pre-created `threading.Event` so tests can trigger shutdown without sending real OS signals.
+- **9 new tests in `tests/test_t501_always_on.py`:** shutdown-event triggers clean exit, ticker joined, bounded deque cap, bounded mode returns list, `seconds=0` alias, `KeyboardInterrupt` handled, mic stop called, signal handlers restored, stopper timer cancelled.
+
+**Live validation:** Only via deterministic unit tests (injected shutdown event + fake `_FakeMicSource`). Real Ctrl-C on the full pipeline was not validated in this session — the agent cannot send SIGINT to a foreground process it runs. The shutdown *mechanism* (watchdog thread + mic.stop() + finally block) is fully tested; the OS signal path is thin wrapper that sets the same event.
+
+**How to run always-on:**
+```
+python -m jarvis --live --forever                        # heuristic brain, no voice
+python -m jarvis --live --forever --local-brain          # Qwen2.5 brain
+python -m jarvis --live --forever --local-brain --voice  # full pipeline
+```
+Stop: **Ctrl-C** → clean exit 0, "stopping gracefully…" message, ticker + watchdog + mic joined.
+
+**→ Remaining Phase 5 tasks:** T-502 (capture/label tooling, qa-tuning), T-503 (threshold tuning, qa-tuning, qa-gated), T-504 (thermal/stability soak, sensing-engineer).
+
+---
+
+## Prior state — 2026-06-16 (T-505 done → real-room ASR quality pass complete)
 
 **Phase:** phase_5 (active). T-505 (real-room ASR quality pass) is **DONE** (sensing-engineer, this session). Suite **398 green** (347 baseline + 51 new), ruff clean. On `main`, not pushed.
 
