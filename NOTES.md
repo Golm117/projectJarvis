@@ -82,9 +82,10 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 **How to run always-on:**
 ```
-python -m jarvis --live --forever                        # heuristic brain, no voice
-python -m jarvis --live --forever --local-brain          # Qwen2.5 brain
-python -m jarvis --live --forever --local-brain --voice  # full pipeline
+# Run through uv — system python is 3.9 and lacks the project env (`uv` is at ~/.local/bin/uv, not on PATH).
+~/.local/bin/uv run python -m jarvis --live --forever                        # heuristic brain, no voice
+~/.local/bin/uv run python -m jarvis --live --forever --local-brain          # Qwen2.5 brain
+~/.local/bin/uv run python -m jarvis --live --forever --local-brain --voice  # full pipeline
 ```
 Stop: **Ctrl-C** → clean exit 0, "stopping gracefully…" message, ticker + watchdog + mic joined.
 

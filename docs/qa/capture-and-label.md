@@ -31,8 +31,9 @@ The committed corpus lives in `docs/qa/fixtures/*.json` (regenerate with
 ## 1. Capture — recording a live session
 
 ```
-python -m jarvis --live --capture session.json
-python -m jarvis --live --local-brain --capture session.json   # real Qwen brain
+# Run through uv (system python is 3.9; uv lives at ~/.local/bin/uv, not on PATH).
+~/.local/bin/uv run python -m jarvis --live --capture session.json
+~/.local/bin/uv run python -m jarvis --live --local-brain --capture session.json   # real Qwen brain
 ```
 
 `--capture PATH` is **off by default**. When given, a `CaptureRecorder` observes
@@ -111,10 +112,11 @@ right-moment / wrong-category fire.
 ### b) The tiny CLI (guided, no hand-editing)
 
 ```
-python -m jarvis.eval.label show     session.json
-python -m jarvis.eval.label set      session.json c2 useful --rationale "clean opening"
-python -m jarvis.eval.label set      session.json c3 false  --category stuck_point
-python -m jarvis.eval.label validate session.json     # OK only when sound + fully labeled
+# Prefix each with `~/.local/bin/uv run` (uv is not on PATH; system python is 3.9).
+~/.local/bin/uv run python -m jarvis.eval.label show     session.json
+~/.local/bin/uv run python -m jarvis.eval.label set      session.json c2 useful --rationale "clean opening"
+~/.local/bin/uv run python -m jarvis.eval.label set      session.json c3 false  --category stuck_point
+~/.local/bin/uv run python -m jarvis.eval.label validate session.json     # OK only when sound + fully labeled
 ```
 
 `show` prints every candidate + its observed facts + current label; `set` writes
