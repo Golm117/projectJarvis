@@ -485,8 +485,35 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 - **Notes:** **DONE — Phase 2 COMPLETE.** NOT qa-tuning-gated (wires existing approved backends behind frozen seams; no threshold/logic changes). One shared `QwenModel` instance feeds both `QwenSummarizerBackend` and `QwenWallBackend` — no double-load. Default stays heuristic mock (model-free); Qwen backends activated via `--local-brain` on the `--live` path. The `interjection_confidence_floor` was NOT changed (qa carry-forward; T-503 lever). **Phase 3 picks up:** T-302 (continuous real-time SummonController re-evaluation on live audio — the Path-B re-check that `run_live` stubs with a trailing re-ingest).
 
 ### Phase 3 — Knowing when to speak
-- (planned T-301) Wire TurnTakingGate to real Silero VAD timing events. [core-engineer + sensing-engineer]
-- (planned T-302) Real-time SummonController — wake word + interjection on live audio. [core-engineer]
+
+### T-301 — Verify VAD↔gate one-clock invariant and document Phase-3 integration seam
+- **Status:** claimed
+- **Priority:** P0
+- **Role:** core-engineer
+- **Owner:** core-engineer
+- **Phase:** 3
+- **Created:** 2026-06-15T00:00:00Z
+- **Claimed:** 2026-06-15T22:00:00Z
+- **Completed:**
+- **Depends on:** T-103, T-104, T-105 (all done)
+- **Description:** VERIFY-ONLY (no logic changes). Trace and confirm three things:
+  (1) **One-clock invariant**: in `run_live`, the `TurnTakingGate`, the `RollingWindow`, and `MicSource.Utterance.ts` all derive from the same injected `now` (`time.monotonic`). The gate stamps VAD edges from `now()`; the window evicts against `now()`; `MicSource` stamps `ts = now()` (not frame-derived) because `run_live` injects the shared clock. Trace and state whether this holds without exception.
+  (2) **Blocking-generator silence gap**: during silence the `MicSource.utterances()` generator yields nothing, so `AttentionLayer.ingest` doesn't run, so Path B (`consider_interjection` / `politeness_gap_elapsed`) is never re-evaluated as the gap grows. Document this as the exact T-302 integration point.
+  (3) **T-302 integration seam**: identify the cleanest hook for a future `tick()`/re-evaluate entry point — describe it (don't implement it) and confirm it can stay pure (reads the injected clock via the gate) with threading isolated to `live.py`. Note the back-off double-fire finding from NOTES.md (non-deterministic Qwen offer text breaks the `category::offer` back-off key).
+  Optionally add a focused test pinning the one-clock invariant (not qa-gated; tests don't change gate/summon/wall logic). Write findings to `docs/architecture/phase3-invariants.md`.
+- **Acceptance:**
+  - One-clock invariant verdict stated plainly (holds / issue + evidence).
+  - Silence-gap confirmed as the T-302 integration point with a precise description of what's missing.
+  - T-302 integration seam described (where a `tick()` or re-evaluate hook would live, what it reads, threading discipline).
+  - Non-deterministic back-off finding noted so T-302's design accounts for it.
+  - Optionally: a focused test that pins the invariant, suite stays 264 green, ruff clean.
+  - Findings in `docs/architecture/phase3-invariants.md`.
+  - NOT qa-gated (no change to TurnTakingGate / SummonController / WallDetector behavior).
+- **Progress:**
+  - 2026-06-15T22:00Z — claimed; orientation complete, beginning trace.
+- **Notes:** VERIFY-ONLY — any defect in a qa-gated module is reported to the orchestrator, not silently fixed here.
+
+- (planned T-302) Real-time SummonController — continuous Path-B re-evaluation during silence. [core-engineer]
 - (planned T-303) Validate abort-on-resume and back-off on live audio. [core-engineer + qa-tuning]
 - (planned T-304) Latency budget pass — gate → detector → offer within target. [core-engineer]
 
