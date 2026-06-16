@@ -5,15 +5,18 @@ Default (``python -m jarvis``): plays a scripted conversation through the real
 events it emits — living-summary updates, a proactive interjection, and a wake-word
 summon → ``EngagementHandoff``. See ``jarvis.demo``.
 
-``python -m jarvis --live`` (T-105): runs the **real** ambient pipeline on live mic
-audio — real microphone → Silero VAD → mlx-whisper ``base.en`` → ``Utterance`` —
-through the same orchestrator (heuristic summarizer/wall backends; Qwen2.5 is
-Phase 2). It captures for a bounded window and prints the transcript + events.
-Flags:
+``python -m jarvis --live`` (T-105 / T-204): runs the **real** ambient pipeline on
+live mic audio — real microphone → Silero VAD → mlx-whisper ``base.en`` →
+``Utterance`` — through the same orchestrator. Flags:
 
 * ``--seconds N`` — how long to listen (default 12).
 * ``--say "TEXT"`` — speak TEXT through the macOS ``say`` command (the human-free
   loopback used in the ASR spike) so the mic captures it; omit to speak yourself.
+* ``--local-brain`` — use the real Qwen2.5-3B/MLX backends (one shared model
+  instance) for summarization and wall detection instead of the heuristic mocks.
+  Loads the ~2 GB weights on the first inference call.
+* ``--mock-brain`` — explicitly select the heuristic mock backends (the default).
+  Useful to confirm the flag is ignored in test contexts.
 
 The ``--live`` path touches a microphone and loads MLX; it is never exercised by
 ``uv run pytest`` (the live wiring lives in ``jarvis.live`` with lazy mic imports),
@@ -59,6 +62,23 @@ def main(argv: list[str] | None = None) -> int:
         help="(--live) stop capturing once a transcribed line contains this text, then "
         "re-check Path B after the politeness gap (used to demo a live interjection)",
     )
+    # Backend selection (T-204): --local-brain uses Qwen2.5/MLX; --mock-brain (default)
+    # uses the heuristic stand-ins. Mutually exclusive; mock is the default so that
+    # --live alone stays model-free for quick sanity-checking.
+    brain_group = parser.add_mutually_exclusive_group()
+    brain_group.add_argument(
+        "--local-brain",
+        action="store_true",
+        default=False,
+        help="(--live) use the real Qwen2.5-3B/MLX summarizer + wall backends "
+        "(one shared model; loads ~2 GB weights on first inference call)",
+    )
+    brain_group.add_argument(
+        "--mock-brain",
+        action="store_true",
+        default=False,
+        help="(--live) explicitly select the heuristic mock backends (default; no model load)",
+    )
     args = parser.parse_args(argv)
 
     if not args.live:
@@ -76,12 +96,16 @@ def main(argv: list[str] | None = None) -> int:
     if isinstance(device, str) and device.isdigit():
         device = int(device)
 
+    # local_brain=True iff --local-brain was passed (--mock-brain or default = False).
+    local_brain: bool = getattr(args, "local_brain", False)
+
     try:
         run_live(
             seconds=args.seconds,
             say_text=args.say,
             device=device,
             stop_after_text=args.stop_after,
+            local_brain=local_brain,
         )
     except MicCaptureError as exc:
         print(f"[live] could not open the microphone: {exc}", file=sys.stderr)

@@ -1,11 +1,25 @@
-"""``run_live`` — the real ambient pipeline on live audio (T-105, ``python -m jarvis --live``).
+"""``run_live`` — the real ambient pipeline on live audio (T-105 / T-204).
 
-This is the Phase-1 live smoke test wiring: the **real** ``AttentionLayer`` driven
-by a **real** ``MicSource`` — real microphone (``SoundDeviceMicSource``) → real
-Silero VAD → real mlx-whisper ``base.en`` — feeding ``Utterance`` events through
-the same orchestrator the Phase-0 mock demo used. The summarizer / wall backends
-stay the Phase-0 heuristics (Qwen2.5/MLX is Phase 2, behind those seams); the
-engaged path is the print stand-ins.
+Phase 1 (T-105): the **real** ``AttentionLayer`` driven by a **real** ``MicSource``
+— real microphone (``SoundDeviceMicSource``) → real Silero VAD → real mlx-whisper
+``base.en`` — feeding ``Utterance`` events through the same orchestrator the
+Phase-0 mock demo used.
+
+Phase 2 (T-204): the local **Qwen2.5/MLX backends** are now wired behind the
+frozen seams for the ``--live`` path.  Backend selection:
+
+* **Default (mock/heuristic) — ``--mock-brain``:** the heuristic
+  ``HeuristicSummarizerBackend`` / ``HeuristicWallBackend`` are used (no model
+  load).  This is still the default so that ``python -m jarvis`` (the mock demo)
+  and ``uv run pytest`` remain model-free.
+* **Local Qwen brain — ``--local-brain``:** one shared ``QwenModel()`` is
+  constructed at startup and injected into both ``QwenSummarizerBackend`` and
+  ``QwenWallBackend``; the ~2 GB weights are loaded once and shared.  This is the
+  real Phase-2 backend.
+
+The ``AttentionLayer.build`` signature already accepts ``summarizer_backend`` and
+``wall_backend`` keyword arguments; this module passes the right pair based on the
+flag.  Zero core module changes.
 
 Unlike the mock demo (``jarvis.demo``), this runs in **real time** on a real
 ``time.monotonic`` clock — the gate's settle / politeness gaps elapse against the
@@ -63,6 +77,31 @@ def _say_async(text: str, delay: float = 1.0) -> threading.Thread:
     return t
 
 
+def _build_local_brain_backends() -> tuple[object, object]:
+    """Construct one shared ``QwenModel`` and return both Qwen backends.
+
+    The ~2 GB weights are loaded **once** on the first inference call; both
+    backends share the same model instance so the weights are never double-loaded.
+    All MLX imports are lazy (inside ``QwenModel._ensure_loaded``) — calling this
+    function before any inference never triggers a model load.
+
+    Returns:
+        A ``(summarizer_backend, wall_backend)`` pair ready to inject into
+        ``AttentionLayer.build``.
+    """
+    # Local imports keep the top-level module free of unconditional ML imports;
+    # importing jarvis.ml.* is safe (no MLX load), but we keep the import here
+    # to mirror the lazy-import discipline of the audio side.
+    from jarvis.ml.qwen import QwenModel
+    from jarvis.ml.summarizer import QwenSummarizerBackend
+    from jarvis.ml.wall import QwenWallBackend
+
+    shared_model = QwenModel()  # one instance — shared by both backends
+    summarizer = QwenSummarizerBackend(shared_model)
+    wall = QwenWallBackend(shared_model)
+    return summarizer, wall
+
+
 def run_live(
     *,
     seconds: float = DEFAULT_LISTEN_SECONDS,
@@ -71,13 +110,14 @@ def run_live(
     stop_after_text: str | None = None,
     now: Callable[[], float] | None = None,
     mic_factory: Callable[[], object] | None = None,
+    local_brain: bool = False,
 ) -> list[Utterance]:
     """Run the real ambient pipeline on live mic audio for a bounded window.
 
-    Wires ``AttentionLayer`` (heuristic backends + print engaged path) to a real
-    ``MicSource`` over a ``SoundDeviceMicSource``, capturing for ``seconds`` and
-    printing every transcript line + emitted event. If ``say_text`` is given, it is
-    spoken through the macOS ``say`` command (the human-free loopback) while the mic
+    Wires ``AttentionLayer`` to a real ``MicSource`` over a
+    ``SoundDeviceMicSource``, capturing for ``seconds`` and printing every
+    transcript line + emitted event. If ``say_text`` is given, it is spoken
+    through the macOS ``say`` command (the human-free loopback) while the mic
     listens.
 
     Args:
@@ -98,6 +138,11 @@ def run_live(
         mic_factory: builds the real mic source (default a ``SoundDeviceMicSource``);
             injectable so a harness could substitute one. The mic deps are imported
             lazily here, never at module import.
+        local_brain: if ``True``, wire the real Qwen2.5/MLX summarizer and wall
+            backends (one shared ``QwenModel`` instance, weights loaded once on the
+            first inference call).  If ``False`` (default), use the heuristic mock
+            backends — no model load, suitable for the quick sanity-check use of
+            ``--live`` without the SLM.
 
     Returns the list of ``Utterance`` the pipeline transcribed (for the caller to
     report on). Raises the typed mic errors (``MicPermissionError`` /
@@ -132,19 +177,29 @@ def run_live(
             print(f"      detail  : {h.detail}")
         print("   " + "-" * 60 + "\n")
 
+    # Backend selection (T-204): default = heuristic mock (model-free);
+    # local_brain=True = one shared QwenModel → both Qwen backends.
+    summarizer_backend = None  # None → AttentionLayer.build uses HeuristicSummarizerBackend
+    wall_backend = None  # None → AttentionLayer.build uses HeuristicWallBackend
+    if local_brain:
+        summarizer_backend, wall_backend = _build_local_brain_backends()
+
     layer = AttentionLayer.build(
         gate=gate,
         now=now,
         responder=PrintResponder(),
         voice=PrintVoice(prefix="      jarvis  : "),
+        summarizer_backend=summarizer_backend,
+        wall_backend=wall_backend,
         on_summary_update=on_summary,
         on_interjection=on_interjection,
         on_engagement=on_engagement,
     )
 
+    brain_label = "Qwen2.5-3B/MLX (local brain)" if local_brain else "MOCK heuristics"
     print("=" * 70)
     print("  Project Jarvis — LIVE ambient pipeline (real mic · Silero · mlx-whisper)")
-    print("  Backends: MOCK heuristics (Qwen2.5 is Phase 2) · engaged path: print")
+    print(f"  Backends: {brain_label} · engaged path: print")
     print(f"  Listening for {seconds:.0f}s …")
     if say_text:
         print(f'  Loopback: speaking via `say`: "{say_text}"')
