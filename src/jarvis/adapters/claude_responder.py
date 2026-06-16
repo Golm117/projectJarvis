@@ -151,7 +151,7 @@ def _describe_trigger(trigger_reason: str) -> str:
     if trigger_reason == "summon":
         return "The user summoned you by name — engage directly."
     if trigger_reason.startswith("wall:"):
-        category = trigger_reason[len("wall:"):]
+        category = trigger_reason[len("wall:") :]
         return (
             f"You detected a conversational wall ({category}) — "
             "offer brief, helpful context without being asked."
