@@ -772,6 +772,44 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
   - **What to scrutinize:** (1) the cooldown/TTL parity between `AttentionLayer` and the eval `runner` — the runner re-implements the rule (it drives the gate+controller directly, not the full layer), so confirm the two agree (the `engagement` moment ↔ `_last_engagement_at`; `wall_detected_at` ↔ `_pending_wall_cached_at`); (2) the cooldown arms on a fired interjection too (a fire is an engagement) — confirm that's the intended live behavior (it suppresses back-to-back ambient interjections, which is desirable but worth a sanity check on real cadence); (3) the 8.0 s / 12.0 s values vs. real conversation pacing (calibrated on the seeded set; revisit on a captured corpus); (4) qa-gated modules unchanged (`git diff src/jarvis/core/{summon_controller,turn_taking_gate,wall_detector}.py` is empty — verified).
   - **NOT marked `done`** — awaiting independent review (do NOT add `Completed:` until approved).
 
+  ---
+
+  **Independent review — core-engineer (2026-06-16):**
+
+  **VERDICT: APPROVE** (pending human sign-off on the 8 s cooldown value).
+
+  **What I checked:**
+
+  1. **Gated modules (SummonController / TurnTakingGate / WallDetector) — UNTOUCHED.** `git diff HEAD~1 HEAD -- src/jarvis/core/{summon_controller,turn_taking_gate,wall_detector}.py` produces zero bytes. Verified independently. The three qa-gated modules are byte-for-byte unchanged — the rules live entirely in the orchestrator, as claimed.
+
+  2. **One-clock invariant — PRESERVED.** `attention_layer.py` contains zero calls to `time.monotonic()`. The `_now` field is `None` if no clock is injected (legacy callers safe), or the same injected `Callable[[], float]` the gate and window already share. Both T-503 timers (`_last_engagement_at`, `_pending_wall_cached_at`) are stamped from `self._now()`. No new clock ownership introduced. The eval runner uses a `SimulatedClock` exclusively (no `time.monotonic` in eval files). Invariant holds.
+
+  3. **Path A (summon) immediacy — CONFIRMED UNAFFECTED.** Traced the `ingest()` code path: the wake-word branch short-circuits on line 240, calls `on_summon` and `_engage` immediately, and returns — the cooldown check (`_in_post_engagement_cooldown`) is never reached on Path A. Independently verified live: two back-to-back summons within the 8 s cooldown both fired (engagement reasons: `['summon', 'summon']`). The cooldown is ambient Path-B only.
+
+  4. **Post-engagement cooldown parity (layer ↔ runner) — CONFIRMED.** `AttentionLayer._engage()` stamps `_last_engagement_at = self._now()` on both Path A and Path B fires. The eval runner's `engagement_state["last"] = m.t` fires on `MomentKind.ENGAGEMENT` moments in the timeline — the WDYN fixture places an `engagement` moment at t=0 (the summon), which maps directly. Independently verified: WDYN fixture fires=0 with cooldown active (engagement at t=0 suppresses the wall at t=3.5s since 3.5 < 8.0), fires=1 (false) with cooldown disabled. Parity confirmed.
+
+  5. **Pending-wall TTL parity (layer ↔ runner) — CONFIRMED.** `AttentionLayer._cache_pending_wall()` stamps `_pending_wall_cached_at = self._now()`. The eval runner uses `c.wall_detected_at` (or `c.match_from` when unset) as the TTL anchor — the stale-pending-wall fixture sets `wall_detected_at=0.0` (when the wall surfaced) and the opening arrives at t=15.0 (> 12 s TTL). Independently verified: stale-wall fixture fires=0 with TTL active, fires=1 (false) with TTL disabled. Parity confirmed.
+
+  6. **Cooldown arms on a fired interjection — VERIFIED AND SOUND.** `_interject()` calls `_engage()` which stamps the cooldown. A second wall fired 1 s after the first interjection is suppressed (test `test_a_fired_interjection_also_arms_the_cooldown` + independently run). This is correct: a fired interjection transitions Jarvis into the engaged half of the conversation, just like a summon. Suppressing a second ambient wall immediately after a fired interjection is the right behavior (precision-first).
+
+  7. **TTL > politeness_gap invariant — CONFIRMED.** TTL=12.0s, politeness_gap=2.0s. A legitimate wall (gap opens at 2.5s, well within the 12s TTL) fires; a stale wall (gap opens at 13s, past the 12s TTL) is dropped. No legitimate fire lost.
+
+  8. **Precision claim — INDEPENDENTLY RE-RUN AND CONFIRMED.** `run_fixtures(seed_fixtures())` returns precision=0.75, total_fires=4, useful_fires=3, false_fires=1. Knob isolation independently verified: both rules off=0.50, cooldown-only=0.60 (stale FP still fires), TTL-only=0.60 (WDYN FP still fires), both=0.75. Each rule removes exactly one FP; neither suppresses a useful fire.
+
+  9. **Remaining FP (`ff-false-wrong-category`) — AGREED.** It is a detector mis-naming (fires `factual_gap` on a real `stuck_point`). The category mismatch causes the fixture to score false; no orchestrator/threshold lever can fix this — the detector is the only lever, and that is local-ml-engineer lane, not orchestrator policy. 0.75 is the correct achievable ceiling on this corpus. Agreed.
+
+  10. **Thread-safety — CONFIRMED UNCHANGED.** No new `threading.Lock` was added inside `AttentionLayer` (the only "Lock" mention is in a docstring). The existing `_layer_lock` in `live.py` wraps both `layer.ingest(u)` and `layer.tick()` (lines 482 and 407–408 respectively), so the two new timer fields (`_last_engagement_at`, `_pending_wall_cached_at`) are read/written under the same lock as all existing state. No new race condition.
+
+  11. **Suite + ruff — CLEAN.** 454 passed, 4 warnings (pre-existing deprecation warnings in third-party deps). `ruff check src/ tests/` → all checks passed.
+
+  **Read on the 8 s cooldown (for human sign-off):**
+
+  The 8.0 s value was calibrated against the seeded FP (engagement at t=0, wall at t=3.5 s → margin of 4.5 s). It is sized to survive with headroom, not over-fit to the exact boundary. The DECISIONS.md entry notes "6.0 s rejected — fragile at the boundary; 8.0 s is robust." This is sound reasoning. However, 8.0 s is on the **longer** side relative to realistic conversation pacing: first-audio latency is ~2.14 s (T-404), a typical 1–3 sentence answer lasts another ~5–15 s via TTS playback, so the engagement period itself usually outlasts the cooldown. The practical over-suppression risk is: a user who says "Jarvis, what time is it?" (summon, t=0), Jarvis answers, then someone else in the room asks "What was the meeting date?" at t=5 s (a genuine independent wall). That wall is suppressed — correctly by the seeded-corpus reasoning (the user is in a Jarvis dialogue), but potentially wrong if the ambient conversation has genuinely moved on. **The precision-first strategy accepts this cost. 5.0–6.0 s would reduce the over-suppression window while still covering the seeded FP with ~1.5–2.5 s margin. The human should weigh: how quickly can an independent new wall surface after a Jarvis engagement in real conversations?** The architecture makes this easy to retune (constructor-injected, eval-testable); 8.0 s can be reduced post-corpus without code changes.
+
+  **Read on the 12 s TTL:** Sound and well-sized. It sits well between the ~2 s real-fire latency (a fresh wall always fires before 12 s) and the 15 s stale opening in the seeded fixture. No legitimate fire is lost. No concern here.
+
+  **Status remains `review` — the orchestrator marks `done` after the human signs off on the cooldown value.**
+
 - (planned T-504) Stability / thermal / battery pass for sustained always-on. [sensing-engineer]
 
 ### T-505 — Real-room ASR quality pass: upgrade to small.en + noise-segment filtering
