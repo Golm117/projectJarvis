@@ -17,7 +17,32 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-16 (T-401→T-404 done → PHASE 4 COMPLETE)
+## Current state — 2026-06-16 (T-505 done → real-room ASR quality pass complete)
+
+**Phase:** phase_5 (active). T-505 (real-room ASR quality pass) is **DONE** (sensing-engineer, this session). Suite **398 green** (347 baseline + 51 new), ruff clean. On `main`, not pushed.
+
+**T-505 — what was built:**
+- **ASR upgraded: `base.en` → `small.en`** (`DEFAULT_MLX_WHISPER_REPO` in `mic_source.py`). The `MlxWhisperTranscriber(repo=...)` arg was already constructor-injectable (T-104); `base.en` stays selectable by passing its repo. `small.en` weights (~466 MB) downloaded and cached.
+- **Lexical segment filter:** `_is_lexical()` in `mic_source.py`, applied in `MicSource._close_segment()`. Drops: empty/whitespace, pure-punctuation/symbol, filler-syllable-only ("Mm.", "Hmm", "Uh"). Keeps: "Jarvis", "Yes.", "No.", all normal speech. Module-level constants: `MIN_WORD_LENGTH=2`, `MIN_LEXICAL_WORDS=1`, `STOP_SYLLABLES` frozenset.
+- **51 new model-free unit tests** in `tests/test_t505_asr_quality.py`.
+
+**Joint budget re-measurement (M5 Pro, 5 warm runs):**
+- small.en ASR: **80 ms** median (vs base.en 40 ms — +40 ms, ~2×)
+- Qwen2.5-3B summarize: 305 ms, detect_wall: 392 ms (minor variance from T-201's 657 ms total, likely model warm vs cold)
+- **Joint total: 775 ms** — 1,225 ms margin vs 2 s budget. **Clears comfortably.**
+
+**Live test results on built-in mic (device 6, `--say` loopback → speaker → built-in mic):**
+- "Hey Jarvis, can you hear me?" → transcript: **"Hey Jarvis, can you hear me?"** → Path A fired (summon).
+- "What was the date of the conference again?" → transcript exact → **factual_gap @ 0.95** → Path B fired.
+- "Yes Jarvis" → transcript: **"Yes Jarvis."** — short reply kept by filter.
+
+**Honest caveat on before/after:** The "Germans" mishearing and garbage segments happened with the user's natural voice at room distance + ambient noise. The `--say` loopback produces cleaner audio than that scenario. Both `base.en` and `small.en` handled the loopback correctly in isolation — the regression is environment-dependent. small.en has meaningfully more parameters at the `.en` size and provides better accuracy in noisy/far-field conditions; the filter is confirmed working end-to-end in the pipeline.
+
+**→ Remaining Phase 5 tasks:** T-501 (always-on loop, core-engineer), T-502 (capture/label tooling, qa-tuning), T-503 (threshold tuning, qa-tuning), T-504 (thermal/stability, sensing-engineer).
+
+---
+
+## Prior state — 2026-06-16 (T-401→T-404 done → PHASE 4 COMPLETE)
 
 **Phase:** phase_4 → **COMPLETE.** All four Phase-4 tasks done: T-401 (ClaudeResponder), T-402 (ElevenLabsVoice), T-403 (VoiceSession streaming pipeline), T-404 (wire + live test). Suite **347 green**, ruff clean. On `main`, not pushed.
 

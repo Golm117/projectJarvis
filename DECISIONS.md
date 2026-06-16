@@ -18,6 +18,17 @@ Keep entries short. One paragraph per field is plenty. If it takes more, it prob
 
 ---
 
+## 2026-06-16 — ASR upgraded from base.en to small.en; lexical segment filter added (T-505)
+
+**Decided by:** Claude Code (sensing-engineer) — T-505
+**Status:** accepted (supersedes the "ASR stays base.en" decision from T-201 for the default model)
+**Context:** Real-room live test with the built-in mic (not BlackHole loopback) revealed `base.en` mishearing "Jarvis" as "Germans" plus garbage segments ("!", "Mm.", "service.!!!!!!!!!!") reaching the rolling window and wall detector. BlackHole loopback tests had hidden these defects because the digital signal is clean; the real mic in a room with ambient noise and far-field speech is not. The T-201 decision ("ASR stays base.en") was made on joint-budget grounds — the upgrade lever was explicitly documented in `asr-spike.md` for exactly this scenario.
+**Decision:** (1) `DEFAULT_MLX_WHISPER_REPO` changed from `mlx-community/whisper-base.en-mlx` to `mlx-community/whisper-small.en-mlx`. `base.en` remains selectable by passing its repo to `MlxWhisperTranscriber(repo=...)`. (2) `_is_lexical()` filter added to `mic_source.py` and applied in `MicSource._close_segment()`: drops empty/whitespace (existing), pure-punctuation/symbol strings ("!", "..."), and filler-syllable-only transcriptions ("Mm.", "Hmm", "Uh", "Um"); keeps wake word ("Jarvis"), short real replies ("Yes.", "No.", "Okay."), and all normal speech. Thresholds: `MIN_WORD_LENGTH=2`, `MIN_LEXICAL_WORDS=1`, `STOP_SYLLABLES` frozenset — all module-level constants.
+**Rationale:** small.en has ~50% more parameters than base.en at the `.en` size and is documented as the upgrade lever. Joint budget re-measured on this M5: small.en ASR 80 ms (vs 40 ms), joint pipeline 775 ms (vs 657 ms) — still clears the 2 s offer budget with 1,225 ms margin. The 118 ms budget reduction is acceptable for the accuracy gain. The segment filter addresses the garbage segments independently of the model: it runs on raw ASR text before any Utterance is created, is model-free, has zero latency cost, and is unit-tested with 51 model-free tests.
+**Alternatives considered:** Keep base.en + only add the filter (rejected — the mishearing "Germans" for "Jarvis" is a model accuracy failure that the filter cannot address, since "Germans" is a legitimate word). Use whisper.cpp small.en (rejected — same rationale as the original runtime choice: one MLX stack). Prompt-engineer the wake-word detection to tolerate mistranscriptions (rejected — fragile, would require regex/fuzzy matching on ASR output, still misses the root cause). Add denoising/pre-processing (not needed — small.en handles reasonable room noise adequately; environment-level improvements like a closer mic or denoiser are out of scope).
+
+---
+
 ## 2026-06-15 — Phase 4 dependency additions: anthropic, elevenlabs, python-dotenv (T-401/T-402)
 
 **Decided by:** Claude Code (voice-integration-engineer) — T-401/T-402

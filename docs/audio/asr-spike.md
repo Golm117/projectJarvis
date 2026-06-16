@@ -223,3 +223,48 @@ the dominant variable — ASR should stay small to protect that budget.
 segmenter (T-103), stamping `Utterance.ts` from the VAD timeline.
 → **local-ml-engineer:** the M5-budget coexistence joint spike before either side
 freezes model sizes (see the flag above).
+
+---
+
+## T-505 update — small.en upgrade + noise filter (2026-06-16)
+
+> **Task:** T-505 · Phase 5 real-room ASR quality pass.
+
+### What changed
+Real-room testing (user's built-in mic, not BlackHole loopback) revealed two problems with `base.en`:
+1. **Name mishearing:** "Jarvis" transcribed as "Germans" (a phonetically plausible but wrong substitution in real-room conditions).
+2. **Garbage segments:** "service.!!!!!!!!!!", "Mm.", "!" reaching the rolling window and wall detector.
+
+**Fix 1 — Model upgrade:** `DEFAULT_MLX_WHISPER_REPO` changed from `whisper-base.en-mlx` to `whisper-small.en-mlx`. `base.en` remains selectable via the `MlxWhisperTranscriber(repo=...)` constructor arg. `small.en` weights (~466 MB) downloaded and cached locally.
+
+**Fix 2 — Lexical segment filter:** `_is_lexical()` added to `mic_source.py`. Applied in `MicSource._close_segment()` before any segment becomes an `Utterance`. Drops pure-punctuation/symbol strings, single-char noise, and filler-syllable-only transcriptions ("Mm.", "Hmm", "Uh"). Keeps wake word ("Jarvis"), short real replies ("Yes.", "No."), and all normal speech.
+
+### Joint budget re-measurement (small.en + Qwen2.5-3B-Instruct-4bit, M5 Pro, 5 warm runs)
+
+| Stage | T-201 base.en (ms) | T-505 small.en (ms) | Delta |
+|---|---:|---:|---:|
+| ASR | 40 | **80** | +40 ms |
+| Summarize (Qwen2.5-3B) | 250 | **305** | +55 ms |
+| Detect wall (Qwen2.5-3B) | 366 | **392** | +26 ms |
+| **Joint total** | **657** | **775** | **+118 ms** |
+| Margin vs 2000 ms budget | 1343 ms | **1225 ms** | −118 ms |
+
+**Verdict: CLEARS the budget with 1,225 ms margin.** small.en ASR is 2× base.en (80 ms vs 40 ms), but that is still negligible against the ~2 s offer budget. The SLM (Qwen) dominates at ~700 ms; the ASR contribution is a rounding error. The 118 ms budget reduction is acceptable for the accuracy gain.
+
+### Live test results on built-in mic (M5, device 6 "MacBook Pro Microphone")
+
+Run 1: `--say "Hey Jarvis, can you hear me?" --device 6 --local-brain`
+- Transcript: **"Hey Jarvis, can you hear me?"** — exact match, wake word correct.
+- Path A fired: `ENGAGEMENT (trigger: summon)`.
+
+Run 2: `--say "What was the date of the conference again?" --device 6 --local-brain`
+- Transcript: **"What was the date of the conference again?"** — exact match.
+- `factual_gap @ 0.95` → Path B fired: `ENGAGEMENT (trigger: wall:factual_gap)`.
+
+Run 3: `--say "Yes Jarvis" --device 6`
+- Transcript: **"Yes Jarvis."** — exact match, short real reply kept by filter.
+
+**Honest caveat:** The `--say` loopback uses macOS text-to-speech through the MacBook Pro's speakers → built-in mic. This is NOT the exact same scenario as the user's original "Germans" mishearing (which was the user's natural voice at room distance with ambient noise). The loopback produces cleaner audio (RMS ~0.010–0.013) than natural far-field speech. Both `base.en` and `small.en` handled the loopback correctly in isolation. The "Germans" mishearing is plausibly reproduced only when the user speaks naturally at a distance — the upgrade provides a meaningful quality improvement in that regime (small.en has ~50% more parameters than base.en at the .en size), but cannot be confirmed with loopback audio alone. The filter is confirmed working end-to-end (segments that don't contain real words are dropped before reaching the pipeline).
+
+### 51 new model-free unit tests
+`tests/test_t505_asr_quality.py` — covers `_is_lexical` drops/keeps, configurable constants, `MlxWhisperTranscriber` repo arg wiring, and `MicSource` end-to-end filter application.

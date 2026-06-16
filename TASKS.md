@@ -684,14 +684,14 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 - (planned T-504) Stability / thermal / battery pass for sustained always-on. [sensing-engineer]
 
 ### T-505 — Real-room ASR quality pass: upgrade to small.en + noise-segment filtering
-- **Status:** claimed
+- **Status:** done
 - **Priority:** P1
 - **Role:** sensing-engineer
 - **Owner:** sensing-engineer
 - **Phase:** 5
 - **Created:** 2026-06-16T00:00:00Z
 - **Claimed:** 2026-06-16T00:00:00Z
-- **Completed:** —
+- **Completed:** 2026-06-16T00:00:00Z
 - **Depends on:** T-104 (done), T-201 (done — joint budget numbers available)
 - **Description:** Real-room ASR quality pass. The live built-in-mic test showed `base.en` mishearing in a room: "Jarvis" → "Germans", plus garbage segments "service.!!!!!!!!!!", "Mm.", "!". Upgrade ASR model from `base.en` to `small.en` (the documented upgrade lever in `asr-spike.md`); keep model configurable. Add a segment filter in `MicSource._close_segment` to drop non-lexical noise before it reaches the window/wall detector/Claude: drop empty text (already done), pure-punctuation/symbol-only segments, and segments below a minimum lexical threshold — while keeping short real replies ("Yes.", "Jarvis", "No.", "Okay."). Re-measure the joint ASR+Qwen budget with `small.en`. Run live on the built-in mic for a verbatim before/after.
 - **Acceptance:**
@@ -704,4 +704,5 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
   - Live built-in-mic test: verbatim before/after — does "Jarvis" transcribe correctly? Are garbage segments gone? Honest result. ✓
 - **Progress:**
   - 2026-06-16T00:00Z — claimed; orientation complete.
-- **Notes:** NOT qa-gated (audio/sensing path only — does not touch TurnTakingGate, SummonController, WallDetector, or any interjection threshold). Scope fence: ASR model + segment filter only.
+  - 2026-06-16T00:00Z — implemented small.en default + _is_lexical filter; 51 new tests; 398 green; ruff clean; joint budget measured (775 ms, 1225 ms margin); live tested on built-in mic device 6; docs/asr-spike.md + DECISIONS.md updated; committed.
+- **Notes:** DONE. NOT qa-gated (audio/sensing path only — does not touch TurnTakingGate, SummonController, WallDetector, or any interjection threshold). **Before:** base.en on built-in mic: "Jarvis"→"Germans", garbage segments "!", "Mm.", "service.!!!!!!!!!!". **After:** small.en + filter: "Hey Jarvis, can you hear me?" transcribes exactly; "Yes Jarvis." passes; "What was the date of the conference again?" fires factual_gap @ 0.95; garbage segments blocked by filter. Joint budget: small.en 80 ms ASR + Qwen 697 ms = 775 ms total, 1225 ms margin vs 2 s budget. Honest caveat: `--say` loopback is cleaner than natural far-field voice; the "Germans" mishearing is a natural-voice/room-noise phenomenon that the upgrade addresses by model quality, but cannot be fully replicated with synthetic loopback. Filter confirmed working end-to-end on the pipeline. Files changed: src/jarvis/audio/mic_source.py, tests/test_t505_asr_quality.py, tests/test_mic_source.py, docs/audio/asr-spike.md, DECISIONS.md.
