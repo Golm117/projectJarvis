@@ -49,8 +49,8 @@ attention logic never touches them directly — it talks to seams.
 | `WallDetector` | interface + mock backend | core-engineer | **yes** (detector + thresholds) |
 | `TurnTakingGate` | state machine (clock-driven) | core-engineer | **yes** |
 | `SummonController` | dual-path state machine | core-engineer | **yes** |
-| `AttentionLayer` | orchestrator | core-engineer | — |
-| `TranscriptSource` (seam) | I/O adapter | core defines · sensing fills (`MicSource`); core ships `ScriptedSource` | — |
+| `AttentionLayer` | orchestrator | core-engineer | — |  ✅ done (T-008)
+| `TranscriptSource` (seam) | I/O adapter | core defines · sensing fills (`MicSource`); core ships `ScriptedSource` | — |  ✅ done (T-008)
 | `SummarizerBackend`, `WallBackend` (seams) | model adapters | core defines · local-ml fills | — |
 | `EngagedResponder`, `VoiceOutput` (seams) | I/O adapters | core defines · voice fills | — |
 
@@ -349,13 +349,39 @@ controller stays a pure state machine over (gate, verdict). The
 `interjection_confidence_floor` is constructor-injected, guarded to `[0,1]`, and
 is the one knob Phase-5 (T-503) sweeps against the precision metric.
 
-### `AttentionLayer` — orchestrator (T-008)
-Wires the above and emits exactly three events. Runs end-to-end against
-`ScriptedSource` + fake responder/voice with zero hardware and zero network.
+### `AttentionLayer` — orchestrator (T-008) · **done**
+Wires the six core modules + the seams and emits exactly three events. Runs
+end-to-end against `ScriptedSource` + fake responder/voice with zero hardware and
+zero network (`python -m jarvis` / `jarvis.demo.run_demo`).
 ```
+AttentionLayer(window, summary, detector, controller, responder, voice,
+               on_summary_update=?, on_interjection=?, on_engagement=?)
 ingest(u: Utterance) -> None
 # emits: on_summary_update(text) | on_interjection(Interjection) | on_engagement(EngagementHandoff)
+# builders: AttentionLayer.build(...) | AttentionLayer.run_scripted(lines, ...)
 ```
+**Event flow (as built):** a wake-word line is **Path A** — add to window, then
+`controller.on_summon(detail=u.text)` and engage immediately. Any other line:
+`window.add` → `summary.consider_update` (emit `on_summary_update` on a refresh) →
+*if* a cheap surface cue (`_has_wall_signal`) → `detector.detect(...)` →
+`controller.consider_interjection(verdict)`; a returned decision emits
+`on_interjection` **and** engages (Path B). **Engagement (either path)** is the
+orchestrator's half of the decision/handoff boundary: it assembles the
+`EngagementHandoff` from the `SummonDecision` (`handoff_reason()` + the `summary`
+and `recent_excerpt` it owns), emits `on_engagement`, then dispatches it through
+`EngagedResponder.respond` → `VoiceOutput.speak`. The `SummonController` holds the
+**same** `TurnTakingGate` the `TranscriptSource` drives, so the Path-B predicates
+read the conversation's real pacing — all on one injected clock.
+
+### `TranscriptSource` (seam) + `ScriptedSource` (T-008) · **done · frozen**
+The transcript **in** seam — `utterances() -> Iterable[Utterance]` (a `Protocol`).
+`ScriptedSource` is the Phase-0 fill; sensing-engineer's `MicSource` (T-104) drops
+in behind it. `ScriptedSource` carries **inter-line timing** so the politeness gap
+elapses deterministically: each `ScriptedLine(speaker, text, gap)`'s `gap` is the
+silence after the line, and as the source plays a line it drives the injected
+clock (`clock_advance`) and the shared `TurnTakingGate`'s `on_speech_start`/
+`on_speech_end` edges — the VAD edges `MicSource` will emit live. (DECISIONS.md
+2026-06-16.) No real `sleep`; runs on the `ManualClock`/`SimulatedClock`.
 
 ---
 
@@ -396,7 +422,10 @@ ElevenLabs turns the mock pipeline into the live one with no change to the core.
 ```
 src/jarvis/
 ├── __init__.py            # version + package docstring  (T-001, done)
-├── types.py               # Utterance (FROZEN, T-002); WallVerdict + WallCategory (FROZEN, T-005); Interjection/EngagementHandoff land w/ their tasks
+├── __main__.py            # `python -m jarvis` → runs the mock demo  (T-008, done)
+├── clock.py               # ManualClock (deterministic injected clock for the demo)  (T-008, done)
+├── demo.py                # run_demo() — scripted conversation through the real layer  (T-008, done)
+├── types.py               # Utterance (FROZEN, T-002); WallVerdict + WallCategory (FROZEN, T-005); Interjection/SummonDecision/EngagementHandoff (FROZEN, T-007)
 ├── core/
 │   ├── __init__.py            # core package docstring  (T-002, done)
 │   ├── text.py                # shared keywords()/jaccard() helpers  (T-002, done)
@@ -406,12 +435,21 @@ src/jarvis/
 │   ├── wall_detector.py       # T-005  ✅ done (WallDetector + WallBackend Protocol + HeuristicWallBackend)
 │   ├── turn_taking_gate.py    # T-006  ✅ done (on_speech_start/end events + 3 predicates on injected clock)
 │   └── summon_controller.py   # T-007  ✅ done (SummonController; emits SummonDecision, not the handoff)
-├── adapters/
-│   ├── transcript_source.py   # TranscriptSource + ScriptedSource  (core)
-│   ├── backends.py            # SummarizerBackend / WallBackend protocols + mocks
-│   └── engaged.py             # EngagedResponder / VoiceOutput protocols + fakes
-└── attention_layer.py     # orchestrator  (T-008)
+├── adapters/                  # T-008  ✅ done (the seam package landed here)
+│   ├── __init__.py            #   re-exports the seams + mocks
+│   ├── transcript_source.py   #   TranscriptSource Protocol + ScriptedSource (drives clock + gate)
+│   ├── backends.py            #   re-exports SummarizerBackend/WallBackend + HeuristicSummarizerBackend (+ HeuristicWallBackend)
+│   └── engaged.py             #   EngagedResponder / VoiceOutput Protocols + PrintResponder/PrintVoice stand-ins
+└── attention_layer.py     # orchestrator  (T-008)  ✅ done
 ```
+
+**Phase 0 modules: COMPLETE.** All six core modules + the orchestrator + the
+`TranscriptSource` seam are built, tested, and run end-to-end in mock mode. The
+`SummarizerBackend` Protocol stayed in `core/living_summary.py` and `WallBackend`
+in `core/wall_detector.py` (their frozen homes); `adapters/backends.py`
+*re-exports* both so the orchestrator/demo import from one place — a single source
+of truth per protocol, no redefinition. Phase 1 replaces `ScriptedSource` with
+`MicSource` behind the frozen `TranscriptSource` seam.
 
 The seam names and signatures above are the part other agents treat as the
 contract; the file paths can still move. **Landed so far (through T-004):**
