@@ -628,22 +628,26 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 
 ---
 **T-401 — ClaudeResponder: EngagedResponder via claude-opus-4-8**
-- **Status:** claimed
+- **Status:** done
 - **Owner:** voice-integration-engineer
 - **Claimed:** 2026-06-15T14:00Z
+- **Completed:** 2026-06-15T15:00Z
 - **Scope:** Implement `ClaudeResponder` in `src/jarvis/adapters/claude_responder.py`. Satisfies the `EngagedResponder` Protocol (`respond(handoff) -> str`). Calls `claude-opus-4-8` with a tight spoken-style system prompt grounded in `EngagementHandoff`. Lazy-imports `anthropic`. Anthropic client injected via constructor for testability (no network in unit tests). Key from env (`ANTHROPIC_API_KEY`). Unit tests with mocked client. Ruff clean.
 - **Acceptance:** `respond(handoff)` returns a 1–3 sentence spoken-style string; suite stays green; no real API call in tests; lazy import verified.
 - **Progress:**
-- **Notes:**
+  - 2026-06-15T14:00Z — claimed; read claude-api skill, confirmed model ID + streaming shape.
+  - 2026-06-15T15:00Z — shipped `src/jarvis/adapters/claude_responder.py` + 26 unit tests in `tests/test_claude_responder.py`. All 307 tests green, ruff clean. `anthropic` + `python-dotenv` added to deps. DECISIONS.md entry written.
+- **Notes:** DONE. Not qa-gated (responder is not a gate/summon/wall module). Spoken-style system prompt: 1–3 sentences, no preamble, no markdown, plain prose, peer-who-was-listening register. Lazy import: `import anthropic` only in `_get_client()` when no injected client. `thinking` param omitted (adaptive off by default on Opus 4.8 — correct for short spoken replies). Handoff → T-402 (ElevenLabsVoice).
 
 ---
 **T-402 — ElevenLabsVoice: VoiceOutput via ElevenLabs streaming TTS**
-- **Status:** open
-- **Owner:**
-- **Claimed:**
+- **Status:** claimed
+- **Owner:** voice-integration-engineer
+- **Claimed:** 2026-06-15T15:00Z
 - **Scope:** Implement `ElevenLabsVoice` in `src/jarvis/adapters/elevenlabs_voice.py`. Satisfies the `VoiceOutput` Protocol (`speak(text) -> None`). Streamed TTS; first audio ≤ 2 s. Configurable `voice_id` + model. ElevenLabs client injected for testability. Lazy-imports `elevenlabs` SDK. Key from env (`ELEVENLABS_API_KEY`). Unit tests with mocked client; no audio playback in tests.
 - **Acceptance:** `speak(text)` streams audio to default output; suite green; no real API call in tests.
 - **Progress:**
+  - 2026-06-15T15:00Z — claimed.
 - **Notes:**
 
 ---
