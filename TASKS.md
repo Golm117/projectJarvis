@@ -654,20 +654,22 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 
 ---
 **T-403 — Token-stream Claude → ElevenLabs; barge-safe**
-- **Status:** claimed
+- **Status:** done
 - **Owner:** voice-integration-engineer
 - **Claimed:** 2026-06-15T15:30Z
+- **Completed:** 2026-06-15T16:00Z
 - **Scope:** Add internal `respond_and_speak(handoff)` method to the voice adapters that pipes Claude token stream directly into ElevenLabs streaming input for ~1–2 s first-audio latency. Barge-safe: playback interruptible on stop signal or resumed speech. Keep `respond()->str` and `speak(text)->None` protocols intact for orchestrator `_engage()` and unit tests.
 - **Acceptance:** First audio begins within ~2 s of handoff; stop signal aborts playback cleanly; suite green.
 - **Progress:**
   - 2026-06-15T15:30Z — claimed.
-- **Notes:**
+  - 2026-06-15T16:00Z — shipped `src/jarvis/adapters/voice_session.py` (`VoiceSession.respond_and_speak`) + 20 tests in `tests/test_voice_session.py`. 347 total green, ruff clean.
+- **Notes:** DONE. Not qa-gated. `VoiceSession` wraps `ClaudeResponder` + `ElevenLabsVoice`. Uses `client.messages.stream()` + `stream.text_stream` for token iteration. Sentence-chunking with `_SENTENCE_END_RE` + `_MAX_CHUNK_CHARS=200` force-flush. Stop event checked before each chunk (barge-safe at sentence granularity). Frozen `respond()` + `speak()` seam contracts preserved. Handoff → T-404 (wire into `--voice` flag in live.py).
 
 ---
 **T-404 — Wire real voice adapters into --live behind --voice flag; live test on M5**
-- **Status:** open
-- **Owner:**
-- **Claimed:**
+- **Status:** claimed
+- **Owner:** voice-integration-engineer
+- **Claimed:** 2026-06-15T16:00Z
 - **Scope:** Add `--voice` / `--real-voice` flag to `__main__.py` and `run_live()` in `live.py`. Default stays `PrintResponder`/`PrintVoice`. With `--voice`: use `ClaudeResponder` + `ElevenLabsVoice` (via `respond_and_speak`). Add `load_dotenv()` at live entry. Run live on M5: capture verbatim Claude answer, confirm ElevenLabs audio played, measure first-audio latency. Try interjection-triggered engagement. Update NOTES.md: Phase 4 COMPLETE + Phase 5 picks up.
 - **Acceptance:** `uv run jarvis --live --voice` produces spoken answer within ~2 s; suite green without keys; NOTES.md updated.
 - **Progress:**
