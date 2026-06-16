@@ -289,3 +289,83 @@ def test_cooldown_and_ttl_reject_negative_values() -> None:
         _layer(clock, gate, post_engagement_cooldown_seconds=-1.0)
     with pytest.raises(ValueError, match="pending_wall_ttl_seconds"):
         _layer(clock, gate, pending_wall_ttl_seconds=-1.0)
+
+
+# ---------------------------------------------------------------------------
+# Scenario D — "What do you need?" after a summon (T-509 qa gate)
+# ---------------------------------------------------------------------------
+#
+# The T-509 builder found that the 7B detector, *in isolation*, rates
+# "What do you need?" (with [Jarvis engaged] in the window) as
+# unanswered_question rating 5 in some framings — it would fire if it reached
+# SummonController. These tests pin the orchestrator-level resolution: the
+# T-503 post-engagement cooldown suppresses a WDYN-style wall that lands WITHIN
+# the cooldown after a summon (the real production case — WDYN is uttered
+# seconds after summoning Jarvis), and documents the RESIDUAL: a wall that lands
+# AFTER the cooldown is not suppressed by this mechanism.
+#
+# Detector-level addendum (qa real-path runs, T-509): in the multi-line
+# [Jarvis engaged] framing the 7B model actually rated WDYN rating 1 / none in
+# 4/4 runs, so detection is a SECOND line of defense behind the cooldown for the
+# common case. The cooldown is the load-bearing guarantee because it does not
+# depend on the model's (non-deterministic) read.
+
+
+def test_scenario_d_wdyn_within_cooldown_is_suppressed() -> None:
+    """Scenario D: WDYN uttered shortly after a summon is suppressed by the
+    cooldown even if the detector flags it as a wall — the production case."""
+    clock = SimulatedClock()
+    gate = TurnTakingGate(clock.now, politeness_gap_seconds=2.0)
+    interjections: list[Interjection] = []
+    # Detector flags WDYN as a high-confidence wall (worst case — the isolated
+    # 7B rating-5 read). The cooldown must suppress it regardless.
+    layer = _layer(
+        clock,
+        gate,
+        wall_verdict=wall("unanswered_question", 0.95, offer="That's a good question."),
+        post_engagement_cooldown_seconds=6.0,
+        on_interjection=interjections.append,
+    )
+
+    # Summon engages Jarvis at t=0.
+    layer.ingest(_utt("Jarvis, help me with something.", ts=clock.now()))
+
+    # ~2 s later the user says "What do you need?" — inside the 6 s cooldown.
+    clock.advance(2.0)
+    _open_gap(gate)
+    layer.ingest(_utt("What do you need?", ts=clock.now()))
+    clock.advance(2.5)  # open the politeness gap
+    layer.tick()
+
+    assert interjections == [], "WDYN within the cooldown must be suppressed"
+    assert layer._pending_wall is None  # noqa: SLF001  (suppressed, not cached)
+
+
+def test_scenario_d_residual_wall_after_cooldown_is_not_suppressed() -> None:
+    """RESIDUAL (flagged to core-engineer): a WDYN-style wall arriving AFTER the
+    cooldown is NOT suppressed by the cooldown — it fires. In practice WDYN is
+    uttered within seconds of the summon (well inside 6 s), so this residual is
+    not the production WDYN case; it documents that the cooldown is time-bounded,
+    not a permanent 'engaged' suppression. A permanent engaged-state suppression
+    would be a SummonController/orchestrator change (qa-gated) — not built here."""
+    clock = SimulatedClock()
+    gate = TurnTakingGate(clock.now, politeness_gap_seconds=2.0)
+    interjections: list[Interjection] = []
+    layer = _layer(
+        clock,
+        gate,
+        wall_verdict=wall("unanswered_question", 0.95, offer="That's a good question."),
+        post_engagement_cooldown_seconds=6.0,
+        on_interjection=interjections.append,
+    )
+
+    layer.ingest(_utt("Jarvis, help me with something.", ts=clock.now()))  # engage at t=0
+
+    clock.advance(7.0)  # past the 6 s cooldown
+    _open_gap(gate)
+    layer.ingest(_utt("What do you need?", ts=clock.now()))
+    clock.advance(2.5)
+    layer.tick()
+
+    # Documents the residual: the cooldown no longer guards this wall.
+    assert len(interjections) == 1, "after the cooldown, the cooldown no longer suppresses"

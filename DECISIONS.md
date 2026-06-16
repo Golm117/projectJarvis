@@ -18,6 +18,17 @@ Keep entries short. One paragraph per field is plenty. If it takes more, it prob
 
 ---
 
+## 2026-06-16 — T-509 qa gate: 7B switch APPROVED on the real multi-line detect_wall path
+
+**Decided by:** qa-tuning (Claude Code)
+**Status:** accepted
+**Context:** The T-508 gate was fooled by clean single-line probes; T-509's brief required validating the 7B switch on the REAL `detect_wall(transcript, summary)` path with multi-line rolling-window transcripts (as production feeds it).
+**Decision:** APPROVED — T-509 `review` → `done`. Frozen modules (`WallVerdict`/`SummonController`/`TurnTakingGate`/`WallDetector`) byte-for-byte unchanged since `b8cdee5`; 7B switch is clean (3B still injectable, one shared model); suite 529 green; ruff clean. Real-path multi-line `detect_wall` (4 runs each): direct unanswered questions FIRE in multi-line context ("4×7?" 4/4 @ rating 5, "conference date?" 4/4) — the T-508 regression is fixed; WDYN/self-musing/plain-statements correctly silent. Precision 0.75 (not regressed). Floor: keep 0.70.
+**Rationale:** The success metric is precision (useful ÷ total fires). The one miss found — "√81?" in a *dense* 4-line homework window (rating 1, the 7B confabulates "Alice answered it") — is a **recall** cost (silence on a gap), not a precision error; it is context-sensitive (√81 fires single-/two-line) and **does not reproduce live** (two `--capture` runs fired √81 → "That's 9." @ 0.95). WDYN (Scenario D) is a non-issue for production: suppressed by both the 7B (rates none) and the T-503 6 s post-engagement cooldown (load-bearing, model-independent), pinned deterministically.
+**Alternatives considered:** (1) Block on the √81 dense-context miss — rejected: it is recall, not precision, and live runs fire; flagged to local-ml-engineer as a v1 prompt lever (exemplar: do not assume a question was answered absent a verbatim answer). (2) Build permanent engaged-state `detect_wall` suppression for the WDYN >6 s residual — out of qa's lane (SummonController/orchestrator change is qa-gated, core-engineer's to build); residual documented + flagged. (3) Recalibrate the floor for 7B — unwarranted: 7B emits ratings 1/4/5 on real inputs and 0.70 separates them cleanly.
+
+---
+
 ## 2026-06-16 — SLM escalated from Qwen2.5-3B to 7B; wall-detector prompt reframed (T-509)
 
 **Decided by:** local-ml-engineer (Claude Code)

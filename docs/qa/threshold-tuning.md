@@ -345,3 +345,106 @@ uv run pytest tests/test_t503_precision_tuning.py -q
 To sweep a knob, override the fixture `config` block in-memory (no code edit) —
 see `tests/test_t503_precision_tuning.py::test_pre_t503_baseline_was_below_target`
 and `dataclasses.replace(fx.config, ...)`.
+
+---
+
+## 7. T-509 qa gate — 7B real-path validation + floor re-read (2026-06-16)
+
+The T-509 gate validated the 7B switch on the **real `detect_wall(transcript,
+summary)` path** with **multi-line rolling-window transcripts** (as production
+feeds it), not the clean single-line probes that fooled the T-508 gate. Verdict:
+**APPROVED** with one documented recall caveat.
+
+### 7.1 Real-path `detect_wall` results (7B, multi-line, 4 runs each)
+
+| Scenario | Transcript (multi-line) | Expected | 7B result |
+|---|---|---|---|
+| A — √81 question | 4-line geometry-homework window ending in "What's the square root of 81?" | fire | **0/4 fire** (rating 1 — *miss*, see §7.2) |
+| B — 4×7 question | 4-line bill-split window ending in "What's 4 times 7?" | fire | **4/4 fire** (rating 5, `unanswered_question @ 0.95`) |
+| C — conference date | 3-line travel window ending in "What was the date of the conference again?" | fire | **4/4 fire** (rating 5 @ 0.95) |
+| D — WDYN post-summon | "[Jarvis engaged] … What do you need?" | no fire | **0/4 fire** (rating 1) ✓ |
+| E — self-musing | "I wonder if my volume is too loud." | no fire | **0/4 fire** (rating 1) ✓ |
+| F — plain statements | "Let's send the PR … grab lunch." | no fire | **0/4 fire** (rating 1) ✓ |
+
+The T-508 prompt-framing regression (direct questions reasoned away as "not a
+gap") **is fixed**: B and C — direct unanswered questions — fire reliably in
+multi-line context. All three no-fire cases (D/E/F) correctly stay silent.
+
+### 7.2 The Scenario-A miss — model confabulation, context-sensitive, recall-only
+
+Scenario A (√81 in a *dense* 4-line homework window) misses deterministically
+(5/5 runs, identical reasoning). Root cause, from the captured `reasoning` field:
+
+> "Bob asked a direct arithmetic question, **but Alice answered it.** No gap."
+
+Alice did **not** answer it — the 7B *confabulates a non-existent answer* to
+justify silence, but only when prior lines give it enough conversational
+scaffolding. Isolating the cause:
+
+- √81 **single-line** → rating 5, fires.
+- √81 **two-line** (one prior line) → rating 5, fires.
+- √81 **dense 4-line** homework context → rating 1, confabulated-answered.
+- 4×7 in the **same 4-line** density → rating 5, fires.
+
+So it is **not** a phrasing regression and **not** a general "direct questions
+miss" — it is a narrow, content-triggered confabulation on a trivially-knowable
+fact inside a dense prior context.
+
+**Crucially, it does NOT reproduce on the live production path.** Two live
+`--capture` runs (real mic · Silero VAD · mlx-whisper · 7B brain · BlackHole
+loopback) fired √81 correctly: `unanswered_question @ 0.95`, offer "That's 9."
+The live rolling window at the moment of the question was 2 lines ("geometry
+homework" + "√81?"), which matches the firing two-line probe — the live window
+does not accumulate the dense 4-line scaffolding the synthetic probe used.
+
+**Why it is not a blocker:** a miss is *silence on a real gap* → a **recall**
+cost, never a **precision** cost. The success metric is precision (= useful ÷
+total fires); precision-first is the DECISIONS.md-logged strategy. The miss
+removes a would-be fire from the numerator AND denominator equally is false — it
+removes nothing from the denominator (no fire happens); it is simply an
+un-serviced gap the user can still summon for. Recorded as a recall datum, not a
+precision regression. **Flagged to local-ml-engineer as a v1 prompt lever**
+(an exemplar that says "do NOT assume a question was answered unless an answer
+appears verbatim in the transcript"); not a v0 blocker.
+
+### 7.3 Floor re-read — keep 0.70
+
+The 7B confidence distribution on real inputs is still **near-binary** but not
+purely so: observed ratings on real-path probes were 1 (→0.05), 4 (→0.80, e.g.
+"I wish I knew how many hours it is"), and 5 (→0.95). No rating-3 (→0.65)
+appeared in the probes, but the mapping places it just below the floor by design.
+The 0.70 floor cleanly separates the tiers the 7B actually emits: 1 (suppressed),
+4/5 (fire). It is **sound and does real work** between rating 3 (0.65, suppressed)
+and rating 4 (0.80, fires). **Recommendation: keep 0.70** for the 7B backend — no
+recalibration warranted by this evidence. (Not finalized here — qa-gated change
+surfaced to orchestrator; the recommendation is keep.)
+
+### 7.4 Scenario D (WDYN) — resolved as a non-issue for the production case
+
+Two independent guards suppress the WDYN false positive:
+1. **Detector level (7B):** in the multi-line `[Jarvis engaged]` framing the 7B
+   rated WDYN rating 1 / none (4/4) — it does not even reach the controller.
+2. **Orchestrator level (T-503 post-engagement cooldown, 6 s):** a WDYN-style
+   wall landing within 6 s of a summon is suppressed *regardless* of the
+   detector's read — the load-bearing guarantee, since it does not depend on the
+   model's (non-deterministic) judgment.
+
+Pinned deterministically in `tests/test_t503_precision_tuning.py`
+(`test_scenario_d_wdyn_within_cooldown_is_suppressed`). WDYN is uttered seconds
+after the summon (well inside 6 s), so the cooldown covers the production case.
+**Residual** (documented, `test_scenario_d_residual_wall_after_cooldown_is_not_suppressed`):
+a wall arriving *after* the 6 s cooldown is not suppressed by this mechanism — the
+cooldown is time-bounded, not a permanent engaged-state suppression. A permanent
+suppression would be a SummonController/orchestrator change (qa-gated) and is
+**not** built here; flagged to core-engineer as the optional parallel
+investigation the builder raised. Not a v0 blocker (no evidence WDYN recurs > 6 s
+post-summon).
+
+### 7.5 Precision unchanged at 0.75
+
+The eval over the committed corpus scores **precision 0.75** (3 useful / 4 fires),
+identical to the T-503/T-508 baseline — **not regressed**. The eval scores labels
++ config (the fixtures carry confidence values, not live 7B output), so the prompt
+change does not move the committed number; the lone false fire remains the
+deliberate `ff-false-wrong-category` test, and the WDYN seed is correctly not
+fired.
