@@ -128,15 +128,63 @@ _RE_WAKE_WORD = re.compile(rf"\b{WAKE_WORD}\b", re.IGNORECASE)
 # surface cues. Ported from the prototype's ``_has_wall_signal``. This is a
 # *cheap pre-filter*, not the wall decision — the detector + SummonController make
 # that. It keeps the brain from running on every utterance (PRD FR-3.4).
+#
+# T-508 widening: the original filter only admitted lines ending in "?" or
+# matching a small set of explicit-miss phrases. This silently skipped:
+#   - "I wonder what the square root of 81 is." (no "?", not in the list)
+#   - "I wonder if X." (self-musing and group-directed both missed)
+#   - Wh- clauses without terminal "?": "I'm not sure what X is", "no clue who Y is"
+# Root cause of the √81 miss: the pre-filter dropped it before the model ever ran.
+# Widening adds: "i wonder", wh-form uncertainty phrasings ("not sure what/who/how/
+# when/where/why", "no clue", "unclear"), and additional factual-gap forms.
+#
+# COST TRADEOFF: the detector costs ~392 ms on the M5 Pro (T-505 measurement).
+# The joint pipeline budget has ~1,145 ms margin (T-505: 775 ms total; T-508
+# raises max_tokens to 200 adding ~80 ms → ~1,065 ms margin). "Run on every
+# complete turn regardless" would close the pre-filter entirely but adds ~392 ms
+# to the median always-on path — deferred pending the T-504 thermal data (ambient
+# load measurement over multi-hour sessions). The widened filter is a targeted
+# middle ground: it catches the known failure class (wh-form gap phrasings) while
+# NOT running the detector on clearly neutral lines like "sounds good" or
+# "let's try option A". The residual FP risk from the wider filter (a "I wonder
+# if I locked the door" musing triggering the detector) is handled by the model
+# itself, not the pre-filter — the detector is precision-first and has an exemplar
+# for self-musing → none.
 _RE_WALL_SIGNAL = re.compile(
-    r"\b(i wish|if only|i (don'?t|do not) (know|remember)|what (was|were)|"
-    r"can'?t recall|no idea|stuck|going in circles|not sure)\b",
+    r"\b("
+    # Explicit wishes / counterfactuals
+    r"i wish|if only|"
+    # Explicit not-knowing / not-remembering
+    r"i (don'?t|do not) (know|remember|recall)|"
+    # Wh-question recall patterns (with or without terminal "?")
+    r"what (was|were|is|are)|"
+    r"who (was|were|is|are)|"
+    # Uncertainty + wh- form: "not sure what/who/how/when/where/why"
+    r"(not sure|no (idea|clue)|unclear|unsure) (what|who|how|when|where|why|if|whether)|"
+    # "I wonder" — catches wh-form gaps without "?" ("I wonder what X is")
+    r"i wonder|"
+    # Can't recall
+    r"can'?t (recall|remember)|"
+    # Stuck-point cues
+    r"stuck|going in circles|"
+    # "I don't remember" shorthand already covered; add more declarative forms
+    r"no (idea|clue)"
+    r")\b",
     re.IGNORECASE,
 )
 
 
 def _has_wall_signal(text: str) -> bool:
-    """Whether a line carries a cheap surface cue worth running detection on."""
+    """Whether a line carries a cheap surface cue worth running detection on.
+
+    Returns ``True`` if the text ends with ``?`` (any question) or matches
+    one of the gap-signal patterns in ``_RE_WALL_SIGNAL``.  This is a *cheap
+    pre-filter* — it passes candidates to the model; the model makes the real
+    decision (and is precision-first, so a wider pre-filter is safe).
+
+    See the comment block above for the T-508 widening rationale and the
+    cost tradeoff documentation.
+    """
     if text.rstrip().endswith("?"):
         return True
     return bool(_RE_WALL_SIGNAL.search(text))
