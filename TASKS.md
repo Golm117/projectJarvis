@@ -332,13 +332,13 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
 - **Notes:** **DONE** (not a mandatory-review trigger — audio path; the gate/summon/wall internals are untouched, only *driven* via the frozen edge + `TranscriptSource` seams). The orchestrator + gate do NOT change for the swap — `MicSource` satisfies the frozen `TranscriptSource` Protocol (`AttentionLayer.run(mic_source)`). **→ T-105 (live-transcript smoke test) completes Phase 1.**
 
 ### T-105 — Live-transcript smoke test on the M5 (completes Phase 1)
-- **Status:** open
+- **Status:** claimed
 - **Priority:** P1
 - **Role:** sensing-engineer
-- **Owner:** —
+- **Owner:** sensing-engineer
 - **Phase:** 1
 - **Created:** 2026-06-15T00:00:00Z
-- **Claimed:** —
+- **Claimed:** 2026-06-15T00:00:00Z
 - **Completed:** —
 - **Depends on:** T-104
 - **Description:** Run the **real ambient pipeline live on the M5**: `AttentionLayer` wired with `MicSource` (real mic + real Silero VAD + real mlx-whisper `base.en` + the heuristic mock summarizer/wall backends — Qwen2.5 is Phase 2). Confirm end-to-end: spoken audio → transcript → rolling window → living-summary updates, and that a wake-word ("Jarvis") summon and/or a wall interjection can fire on live speech. Generate speech without a human via the macOS `say` loopback (say → speakers → mic → pipeline). Report exactly what the pipeline transcribed and which events fired — never fabricate; if the loopback audio is too quiet/echoey to transcribe cleanly, say so and capture what actually happened. Write the smoke-test method + result into `docs/audio/working-notes.md` (or `docs/audio/live-smoke.md`). If a `--live` demo entry point is added, keep the default `uv run pytest` green and don't make CI depend on a mic.
