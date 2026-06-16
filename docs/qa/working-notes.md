@@ -2,6 +2,47 @@
 
 _(scratchpad for in-flight thinking; promote durable findings to topic files)_
 
+## T-502 capture-and-label tooling + precision eval runner — DONE (2026-06-16)
+
+Built the bridge from a live run to a precision number. Durable doc:
+`docs/qa/capture-and-label.md`; the schema landed in code under `src/jarvis/eval/`.
+**NOT qa-gated** (tooling + fixtures; no gate/summon/wall/threshold change). Suite
+**439 green** (32 new), ruff clean. Commit `55c63f0`.
+
+**Design (DECISIONS.md):** capture **only observes** — a recording-`TurnTakingGate`
+subclass + a pass-through `WallBackend` wrap + the existing `on_*` callbacks, so a
+recorded run is byte-identical to a normal one and qa stays out of core internals.
+The wall-backend wrap is what lets capture see the **dropped** Path-B candidates
+(below-floor / no-gap / resumed / backed-off) that `on_interjection` never reveals
+— the exact data a precision sweep needs. The runner executes the **real** gate +
+controller on a `SimulatedClock` (verdicts built from labels, not a model), so the
+metric can't drift from production behavior; T-503 sweeps by overriding the injected
+`Config`, no code edit.
+
+**Seeded corpus scores precision 0.60** on shipped defaults (5 fires, 3 useful):
+the FP cases ("What do you need?" + the wrong-category fire) are present and
+counted. Every eval-plan behavior is exercised (clean fire, abort-on-resume,
+wrong-category, back-off suppression, below-floor miss, summon-excluded).
+
+**"What do you need?" verdict — FALSE** (the brief asked). Directed AT Jarvis
+inside a summon exchange, not an unanswered wall between humans → a fire is noise;
+precision-first → borderline labels FALSE. **The sharp T-503 finding:** the TP and
+this FP are BOTH `factual_gap @ 0.95` (Qwen near-binary confidence, T-203), so the
+confidence floor **cannot** separate them — moving 0.70 moves both together. The
+lever is **context** (is the wall inside a just-engaged exchange?), a detector/
+orchestrator signal, not a threshold. T-503 must not chase a floor that can't win
+on this pair.
+
+**Carry-forward for T-503:** add the `_pending_wall` staleness fixture (the
+T-302/T-303 watch-item — wall cached across off-topic turns then a late silence)
+and decide whether a TTL / topic-shift clear is warranted (a SummonController/
+orchestrator-policy change → qa-gated). The schema already supports it.
+
+**Pre-existing T-501 bug found + spawned as a separate task (not fixed here —
+scope fence):** `__main__.py` `--forever` passes `const=` to a `store_true` action
+→ `python -m jarvis --live`/`--help` crash on startup. Blocks running `--capture`
+until fixed; one-line fix. The T-502 logic is fully tested model-free regardless.
+
 ## T-302 tick() + continuous Path-B loop — MANDATORY REVIEW: APPROVED + T-303 live validation done (2026-06-15)
 
 Mandatory qa-tuning review of core-engineer's `AttentionLayer.tick()` + the live

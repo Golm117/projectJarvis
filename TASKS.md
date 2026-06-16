@@ -706,13 +706,14 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 - **Notes:** DONE (not qa-gated). **Always-on command:** `python -m jarvis --live --forever` (add `--local-brain --voice` for full pipeline). **Stop:** Ctrl-C → clean exit 0, no traceback. **Shutdown mechanism:** daemon watchdog thread waits on `_shutdown_event`, then calls `mic.stop()` to unblock the `frames()` generator; signal handler + KeyboardInterrupt both set the event. **Bounded memory:** `collections.deque(maxlen=1000)` in always-on mode; bounded-mode `list` return contract unchanged. **Key design decision in DECISIONS.md:** watchdog-thread is the cleanest always-on shutdown without changing `AudioSource` protocol. **Live validation:** only validated via deterministic unit tests (injected shutdown event + fake mic); real Ctrl-C on the full pipeline was not run in this session (agent cannot send SIGINT to a foreground process). **→ Remaining Phase 5:** T-502 (capture/label tooling, qa-tuning), T-503 (threshold tuning, qa-tuning, qa-gated), T-504 (thermal/stability soak, sensing-engineer).
 
 ### T-502 — Capture-and-label tooling for real conversations (ephemeral, opt-in)
-- **Status:** claimed
+- **Status:** done
 - **Priority:** P1
 - **Role:** qa-tuning
 - **Owner:** qa-tuning
 - **Phase:** 5
 - **Created:** 2026-06-16T00:00:00Z
 - **Claimed:** 2026-06-16T14:00:00Z
+- **Completed:** 2026-06-16T15:30:00Z
 - **Depends on:** T-010 (done — eval-plan fixture format), T-501 (done — always-on `run_live`)
 - **Description:** Build the capture-and-label tooling that turns a live conversation into the labeled fixtures the interjection-precision eval (T-010) and the threshold sweep (T-503) run on. Five parts:
   1. **Capture mechanism** — record a live session's timeline into the eval-plan fixture schema: the ordered utterances + speech_start/speech_end edges (timing), every Path-B candidate (the `WallVerdict` the detector returned + whether `SummonController` fired or dropped it + why), and Path-A summons. Hook into `run_live` via the existing event callbacks + the gate edges + a verdict-observing wrapper around the wall backend — never reach into core internals. Output a fixture JSON in the eval-plan schema.
@@ -730,9 +731,10 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
   - NOT qa-gated (capture/label/eval TOOLING + fixtures; no change to TurnTakingGate/SummonController/WallDetector or any threshold — that's T-503).
 - **Progress:**
   - 2026-06-16T14:00:00Z — claimed; orientation complete (eval-plan, live.py, types, gate, controller, attention_layer, fakes all read).
-- **Notes:** Capture observes — never alters — the pipeline: a `CaptureRecorder` wraps the wall backend (to see every verdict, fired or dropped) and subscribes to the existing `on_*` callbacks + gate edges. T-503 will sweep thresholds against the eval runner this builds. The "What do you need?" case is the kind of false-positive T-503 must tune away.
+  - 2026-06-16T15:30:00Z — built `src/jarvis/eval/` (fixture/capture/label/runner/seed); `--capture PATH` flag in live.py + __main__.py; seeded corpus `docs/qa/fixtures/*.json`; 32 new tests; 439 green; ruff clean. Committed `55c63f0`.
+- **Notes:** **DONE — NOT qa-gated** (tooling + fixtures only; no gate/summon/wall/threshold change). **What T-503 now has to tune against:** the eval runner `jarvis.eval.runner.run_fixtures(...)` computes `precision = useful ÷ total Path-B fires` deterministically (SimulatedClock + real gate/controller, no model), holding the labeled `docs/qa/fixtures/*.json` fixed and overriding each fixture's `config` block (the 3 knobs: politeness_gap_seconds, interjection_confidence_floor, settle_seconds) to sweep. **Seeded set scores precision 0.60 on shipped defaults** (5 fires, 3 useful — the FP cases present). **Capture** (`--capture PATH`, opt-in/ephemeral/local-only/never-audio) observes a live run via a recording-gate subclass + a pass-through wall-backend wrap + the on_* callbacks, emitting raw (UNLABELED) candidates **including dropped ones**; the `jarvis.eval.label` CLI fills ground truth. **qa verdict on "What do you need?": FALSE** (directed at Jarvis inside a summon exchange, not an unanswered wall; precision-first). **T-503 note:** both the TP and that FP are `factual_gap @ 0.95` (Qwen near-binary confidence) so the floor can't separate them — the lever is context (is the wall inside a just-engaged exchange?), not the threshold. **Carry-forward:** add the `_pending_wall` staleness fixture (T-302/T-303 watch-item) + decide on a TTL (qa-gated). Full doc: `docs/qa/capture-and-label.md`. **Found pre-existing T-501 bug** (spawned as a separate task): `--forever` in `__main__.py` passes `const=` to a `store_true` action → `python -m jarvis --live`/`--help` crash on startup; blocks actually *running* `--capture` until fixed.
 
-- (planned T-503) Tune politeness-gap + confidence threshold against the interjection-precision metric. [qa-tuning]
+- (planned T-503) Tune politeness-gap + confidence threshold against the interjection-precision metric. [qa-tuning] — **the harness is ready:** sweep `jarvis.eval.runner.run_fixtures` over `docs/qa/fixtures/*.json`, overriding each fixture's `config` block; baseline precision 0.60. Add the staleness fixture (qa-gated TTL decision) per the T-502 carry-forward. qa-gated.
 - (planned T-504) Stability / thermal / battery pass for sustained always-on. [sensing-engineer]
 
 ### T-505 — Real-room ASR quality pass: upgrade to small.en + noise-segment filtering

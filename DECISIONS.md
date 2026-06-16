@@ -18,6 +18,17 @@ Keep entries short. One paragraph per field is plenty. If it takes more, it prob
 
 ---
 
+## 2026-06-16 — Capture observes the pipeline, never alters it; precision eval runs the real modules (T-502)
+
+**Decided by:** Claude Code (qa-tuning) — T-502
+**Status:** accepted
+**Context:** T-502 had to turn a live conversation into the labeled fixtures the interjection-precision eval (T-010) and the threshold sweep (T-503) run on, without changing any decision the pipeline makes and without reaching into core internals (the qa golden rule). Two design questions: how does capture see the *dropped* Path-B candidates (the ones `on_interjection` never reveals), and what does the eval runner actually execute?
+**Decision:** (1) **Capture is pure observation.** A `CaptureRecorder` hooks three already-public seams: a recording `TurnTakingGate` subclass (records edges, delegates timing to the unmodified parent), a pass-through wrapper around the `WallBackend` (records every verdict, returns it unchanged), and the existing `on_utterance`/`on_interjection`/`on_engagement` callbacks. **Every wall verdict becomes a Path-B candidate — including dropped ones** — because the backend wrap sees them all. No core module changes. (2) **The eval runner executes the real `TurnTakingGate` + `SummonController`** on a `SimulatedClock`, feeding verdicts built from the fixture *labels* (not a model), so the metric is exactly "what would the shipped decision machine do on this labeled conversation under this config." T-503 sweeps by overriding the injected `Config` (the 3 constructor-injected thresholds) — no code edit. (3) **Capture is opt-in/ephemeral/local-only/never-audio** (`--capture PATH`, off by default; transcripts + events only; local file; nothing uploaded) per the PRD privacy hard-nos.
+**Rationale:** Observation-via-seam-wrapping keeps the captured run byte-identical to a normal run (a recorded session is a real session) and keeps qa out of core internals, so the capture survives the same backend swaps the architecture allows. Running the *real* modules (not a re-implementation of the rule) means the precision number can't drift from production behavior. The fixture schema is pinned in one place (`fixture.py`) so capture, the labeler, and the runner share one contract.
+**Alternatives considered:** Capturing only fired interjections via `on_interjection` (rejected — loses every dropped candidate, which is exactly what a precision sweep needs). A monkeypatch/instrumentation hook inside `SummonController` (rejected — reaches into a qa-gated module's internals; violates the golden rule). Re-implementing the decision rule in the runner for speed (rejected — would let the metric diverge from the shipped controller). YAML fixtures (rejected — JSON needs no dependency and the labeler experience is fine).
+
+---
+
 ## 2026-06-16 — Always-on mode: --forever flag, shutdown watchdog, bounded deque (T-501)
 
 **Decided by:** Claude Code (core-engineer) — T-501

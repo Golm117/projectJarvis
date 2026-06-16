@@ -17,7 +17,29 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-16 (T-501 done → always-on mode, graceful shutdown, bounded memory)
+## Current state — 2026-06-16 (T-502 done → capture-and-label tooling + precision eval runner)
+
+**Phase:** phase_5 (active). T-502 (capture-and-label tooling, qa-tuning, this session) is **DONE**. Suite **439 green** (407 baseline + 32 new), ruff clean. On `main`, not pushed. **NOT qa-gated** (tooling + fixtures only; no gate/summon/wall/threshold change).
+
+**T-502 — what was built (`src/jarvis/eval/` + `docs/qa/fixtures/` + `docs/qa/capture-and-label.md`):**
+
+- **The fixture schema is now code** (`eval/fixture.py`): `Fixture`/`Moment`/`Candidate`/`Config` + JSON (de)serialization + `validate()`. Matches the eval-plan (T-010) spec: monotonic timeline (utterance/speech_start/speech_end) + per-candidate ground truth (wall, category, useful|false, match-window) + the `config` block of the 3 thresholds T-503 sweeps. New `observed_category` field models a wrong-category fire.
+- **Capture** (`eval/capture.py`, `--capture PATH` in live.py + __main__.py): a `CaptureRecorder` that **only observes** a `run_live` session — a recording-`TurnTakingGate` subclass (records edges, delegates timing unchanged) + a pass-through wrap of the `WallBackend` (records every verdict, returns it unchanged) + the existing `on_*` callbacks. **Every wall verdict becomes a Path-B candidate, including the ones SummonController DROPPED** (which `on_interjection` alone never reveals). No core-internal access. **Opt-in / ephemeral / local-only / never raw audio / nothing uploaded** (PRD privacy hard-nos). Emits raw fixtures with `UNLABELED` candidates.
+- **Labeling** (`eval/label.py`): functions + a tiny CLI (`python -m jarvis.eval.label show|set|validate FIXTURE.json`) to fill the placeholder ground truth. Or edit the pretty JSON directly (each candidate carries the observed facts).
+- **Eval runner** (`eval/runner.py`): `precision = useful ÷ total Path-B fires`, deterministic on a `SimulatedClock` through the **real** gate + controller (verdicts built from labels, no model/audio/network). Per-category breakdown; refuses unlabeled fixtures; Path-A summons excluded; abort/back-off correctly remove would-be fires.
+- **Seeded corpus** (`eval/seed.py` → `docs/qa/fixtures/*.json`, regenerate with `python -m jarvis.eval.seed docs/qa/fixtures`): real-session fixtures (the `factual_gap` TP "What was the date of the conference again?", the borderline FP "What do you need?" **labeled FALSE**, a Path-A summon) + the 5 eval-plan behavior illustrations. **Scores precision 0.60 on shipped defaults** (5 fires, 3 useful — FPs present → < 1.0).
+
+**qa verdict on "What do you need?" (asked in the brief): FALSE.** It surfaced inside a summon exchange — the question is directed AT Jarvis, not an unanswered wall between humans — so a fire is noise; and precision-first means a borderline case is FALSE in the yardstick. **Note for T-503:** both the TP and this FP are `factual_gap @ 0.95` (the Qwen near-binary-confidence problem, T-203), so the confidence floor **cannot** separate them — the real lever is context (is the wall inside a just-engaged exchange?), a detector/orchestrator signal, not a threshold. Recorded in `docs/qa/capture-and-label.md`.
+
+**→ What T-503 (next, qa-gated) tunes against:** the eval runner `jarvis.eval.runner.run_fixtures(...)` over the labeled `docs/qa/fixtures/*.json`, overriding each fixture's `config` block (politeness_gap_seconds / interjection_confidence_floor / settle_seconds) to sweep, picking the operating point clearing ≥ 70 %-useful with false interjections rare. Baseline precision 0.60. **Carry-forward:** add the `_pending_wall` staleness fixture (T-302/T-303 watch-item) and decide whether a TTL / topic-shift clear is warranted (a SummonController/orchestrator-policy change → qa-gated).
+
+**⚠️ Found a pre-existing T-501 bug (spawned as a separate task, not fixed here — scope fence):** in `src/jarvis/__main__.py` the `--forever` arg passes `const="1000"` to a `store_true` action, which argparse rejects → **`python -m jarvis --live ...` and `--help` crash on startup** with `TypeError: _StoreTrueAction.__init__() got an unexpected keyword argument 'const'`. This blocks actually *running* `--capture` (and every live invocation) until fixed. The fix is one line (drop `const=`, inline the `1000` in the help text). The T-502 capture/label/eval logic is fully tested model-free regardless.
+
+**→ Remaining Phase 5 tasks:** T-503 (threshold tuning, qa-tuning, qa-gated — harness now ready), T-504 (thermal/stability soak, sensing-engineer).
+
+---
+
+## Prior state — 2026-06-16 (T-501 done → always-on mode, graceful shutdown, bounded memory)
 
 **Phase:** phase_5 (active). T-501 (always-on end-to-end run) is **DONE** (core-engineer, this session). Suite **407 green** (398 baseline + 9 new), ruff clean. On `main`, not pushed.
 
