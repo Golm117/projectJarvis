@@ -314,15 +314,42 @@ Shared task list. Any agent (Claude Code or a spawned subagent) reads this befor
   - 2026-06-15 — **LIVE check RAN** (`test_live_silero_vad_on_mic_optional` PASSED, not skipped): real Silero model loaded + real mic, >0 frames processed end-to-end (permission granted on this M5).
 - **Notes:** **DONE** (not a mandatory-review trigger — VAD/audio path; the gate/summon/wall internals are untouched, only *driven* via the frozen edge seam). Edge API aligned to (not reshaped): `TurnTakingGate.on_speech_start`/`on_speech_end` (DECISIONS.md 2026-06-15). New seam introduced: **`FrameClassifier`** (isolates torch so the gate-driving logic is testable without it). **→ T-104 (MicSource) is next:** wire this VAD + `mlx-whisper base.en` into `Utterance` events behind the frozen `TranscriptSource` seam — feed ASR the concatenated frames of each speech segment (the start→end window), stamp `Utterance.ts` from the VAD timeline, and drive the orchestrator's shared gate with the same edges. Promotes `mlx-whisper` from the `asr-spike` uv group into real deps. Then T-105 (live-transcript smoke test). **⚠️ still pending with local-ml-engineer:** the M5 ASR+SLM joint coexistence budget (see `asr-spike.md` + NOTES.md) before model sizes freeze.
 
+### T-104 — MicSource adapter (VAD + mlx-whisper → Utterance behind TranscriptSource)
+- **Status:** claimed
+- **Priority:** P1
+- **Role:** sensing-engineer
+- **Owner:** sensing-engineer
+- **Phase:** 1
+- **Created:** 2026-06-15T00:00:00Z
+- **Claimed:** 2026-06-15T00:00:00Z
+- **Completed:** —
+- **Depends on:** T-102, T-103
+- **Description:** Implement **`MicSource`** as a `TranscriptSource` (the same frozen seam `ScriptedSource` implements, so it drops into `AttentionLayer` unchanged). It runs the mic → Silero VAD pipeline; on each **speech segment** (the `on_speech_start`→`on_speech_end` window) it concatenates that segment's frames and transcribes them via **mlx-whisper `base.en`**, producing an `Utterance(speaker, text, ts)` with `ts` stamped from the VAD timeline (sample count ÷ sample rate). It drives the orchestrator's **shared `TurnTakingGate`** with the same speech-start/speech-end edges (so summon/interjection timing works on live audio). Speaker label is a fixed placeholder (diarization out of scope for v0). ASR sits behind a small **`Transcriber` Protocol** seam so a fake transcriber can be injected in unit tests — the real model is never required in unit tests. Promotes **`mlx-whisper`** from the `asr-spike` uv group into real `[project.dependencies]` (now shipped runtime); recorded in DECISIONS.md.
+- **Acceptance:** A `MicSource(TranscriptSource)` + a `Transcriber` Protocol seam (default `MlxWhisperTranscriber`, lazy import) + a `FakeTranscriber`. Deterministic tests (no real mic/model) on `FakeAudioSource` + `FakeTranscriber` prove: a speech segment becomes the right `Utterance`; `ts` comes from the VAD timeline; the shared gate receives the matching `on_speech_start`/`on_speech_end` edges; multiple segments yield multiple utterances; silence-only yields none. `uv run pytest -q` green (167 baseline + new), ruff clean. `mlx-whisper` promoted to real deps + DECISIONS.md entry. Optional live check skipped when no device/model.
+- **Progress:**
+  - 2026-06-15 — claimed; expanded from the Phase-1 one-liner.
+- **Notes:** The orchestrator + gate do NOT change for the swap — `MicSource` satisfies the frozen `TranscriptSource` Protocol. Then T-105 (live-transcript smoke test) completes Phase 1.
+
+### T-105 — Live-transcript smoke test on the M5 (completes Phase 1)
+- **Status:** open
+- **Priority:** P1
+- **Role:** sensing-engineer
+- **Owner:** —
+- **Phase:** 1
+- **Created:** 2026-06-15T00:00:00Z
+- **Claimed:** —
+- **Completed:** —
+- **Depends on:** T-104
+- **Description:** Run the **real ambient pipeline live on the M5**: `AttentionLayer` wired with `MicSource` (real mic + real Silero VAD + real mlx-whisper `base.en` + the heuristic mock summarizer/wall backends — Qwen2.5 is Phase 2). Confirm end-to-end: spoken audio → transcript → rolling window → living-summary updates, and that a wake-word ("Jarvis") summon and/or a wall interjection can fire on live speech. Generate speech without a human via the macOS `say` loopback (say → speakers → mic → pipeline). Report exactly what the pipeline transcribed and which events fired — never fabricate; if the loopback audio is too quiet/echoey to transcribe cleanly, say so and capture what actually happened. Write the smoke-test method + result into `docs/audio/working-notes.md` (or `docs/audio/live-smoke.md`). If a `--live` demo entry point is added, keep the default `uv run pytest` green and don't make CI depend on a mic.
+- **Acceptance:** A documented live run (method + verbatim transcript + which events fired, or an honest note if loopback was poor) in the audio docs; a runnable `--live` path that doesn't break the default test suite; Phase 1 marked COMPLETE in NOTES.md with what Phase 2 picks up.
+- **Progress:**
+- **Notes:** Completes Phase 1 (the ambient half runs on real audio end-to-end). Phase 2 picks up Qwen2.5/MLX behind the summarizer/wall seams + the pending ASR+SLM joint M5 budget with local-ml-engineer.
+
 ---
 
-## Planned tasks (Phase 1+ — one-liners, expanded to full entries when the phase becomes active)
+## Planned tasks (Phase 2+ — one-liners, expanded to full entries when the phase becomes active)
 
-### Phase 1 — Real ears
-- (planned T-104) MicSource adapter — wire VAD + ASR into `Utterance` events behind `TranscriptSource`. [sensing-engineer]
-- (planned T-105) Live-transcript smoke test on the M5 — speak, see the transcript. [sensing-engineer]
-
-_(T-101, T-102, T-103 expanded to full entries below — Phase 1 is active.)_
+_(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the phase is complete once T-105 lands.)_
 
 ### Phase 2 — Local understanding
 - (planned T-201) Qwen2.5/MLX runtime spike — pick model size (e.g. 1.5B vs 3B) by latency + quality. [local-ml-engineer]
