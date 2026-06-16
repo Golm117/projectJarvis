@@ -678,7 +678,32 @@ _(Phase 1 — Real ears: all tasks T-101…T-105 are full entries above; the pha
 - **Notes:** DONE — Phase 4 COMPLETE. First-audio latency 2.14 s (measured isolated VoiceSession timing test, M5 Pro). Real voice path: `python -m jarvis --live --voice [--local-brain]`. Default (no --voice) stays print stand-ins, no API keys needed. Response register confirmed correct (2 sentences, no preamble, plain prose). `mpv` installed via brew (required by elevenlabs.play.stream). Human decisions needed: voice ID choice (Rachel default), API cost acceptance, always-on loop design for T-501.
 
 ### Phase 5 — Make it live & tune
-- (planned T-501) Always-on end-to-end run on the M5. [core-engineer]
+
+### T-501 — Always-on end-to-end run: graceful shutdown + bounded memory
+- **Status:** claimed
+- **Priority:** P0
+- **Role:** core-engineer
+- **Owner:** core-engineer
+- **Phase:** 5
+- **Created:** 2026-06-16T00:00:00Z
+- **Claimed:** 2026-06-16T12:00:00Z
+- **Completed:**
+- **Depends on:** T-302 (done), T-404 (done), T-505 (done)
+- **Description:** Make `run_live` run continuously without a fixed `--seconds` window, with graceful shutdown and bounded memory, so the user can actually leave Jarvis running. Three sub-goals:
+  1. **Always-on mode (unbounded run):** Add `--forever` flag (or `--seconds 0` meaning "no limit"). Keep the existing bounded `--seconds` behavior unchanged (default 12) so smoke tests and quick checks are unaffected.
+  2. **Graceful shutdown:** Install SIGINT/SIGTERM handlers (or catch KeyboardInterrupt) that cleanly: set `ticker_stop`, join the ticker thread, stop the mic (`mic.stop()` — thread-safe+idempotent), stop in-progress voice playback (T-403 barge-safe stop event if voice path active), join the `say` thread, exit 0. No hang, no traceback dump on Ctrl-C. The `mic_source.utterances()` generator loop must exit promptly when the mic stops.
+  3. **Bounded memory (critical for always-on):** `transcribed: list[Utterance]` appends every utterance forever → unbounded in always-on mode. In always-on mode, cap with a bounded `collections.deque(maxlen=...)` or just track a count. The bounded `--seconds` path keeps the existing `list[Utterance]` return for smoke tests.
+- **Acceptance:**
+  - `--forever` flag added to `__main__.py`; `run_live(forever=True)` or `run_live(seconds=0)` chosen.
+  - Bounded `--seconds N` path unchanged (returns list, smoke tests green).
+  - Graceful shutdown: Ctrl-C / SIGTERM exits 0, ticker thread joined, mic stopped, say thread joined — no hang, no traceback.
+  - Bounded memory: always-on accumulation capped (assert with fake source in tests).
+  - Tests: (a) shutdown mechanism exercised deterministically (not via real OS signal); (b) bounded-memory assertion feeding many utterances; (c) suite stays green (currently 398); ruff clean.
+  - NOT qa-gated (runtime loop / shutdown / memory in `live.py` + `__main__.py` only; no change to TurnTakingGate/SummonController/WallDetector or any threshold).
+- **Progress:**
+  - 2026-06-16T12:00:00Z — claimed; orientation complete (all key files read).
+- **Notes:**
+
 - (planned T-502) Capture-and-label tooling for real conversations (ephemeral, opt-in). [qa-tuning]
 - (planned T-503) Tune politeness-gap + confidence threshold against the interjection-precision metric. [qa-tuning]
 - (planned T-504) Stability / thermal / battery pass for sustained always-on. [sensing-engineer]
