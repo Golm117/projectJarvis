@@ -370,7 +370,15 @@ def run_live(
         on_engagement=on_engagement,
     )
 
-    brain_label = "Qwen2.5-3B/MLX (local brain)" if local_brain else "MOCK heuristics"
+    if local_brain:
+        # Derive the label from the actual model so the banner can't go stale
+        # (T-509 switched 3B→7B but the old banner kept saying "3B").
+        from jarvis.ml.qwen import DEFAULT_MODEL_PATH
+
+        _model_name = DEFAULT_MODEL_PATH.rsplit("/", 1)[-1].replace("-Instruct-4bit", "")
+        brain_label = f"{_model_name}/MLX (local brain)"
+    else:
+        brain_label = "MOCK heuristics"
     voice_label = "Claude claude-opus-4-8 + ElevenLabs" if real_voice else "print stand-ins"
     if forever:
         mode_label = "always-on (no time limit — Ctrl-C to stop)"
