@@ -448,3 +448,98 @@ identical to the T-503/T-508 baseline — **not regressed**. The eval scores lab
 change does not move the committed number; the lone false fire remains the
 deliberate `ff-false-wrong-category` test, and the WDYN seed is correctly not
 fired.
+
+---
+
+## 8. T-510 qa gate — confabulated-answer guard (2026-06-16)
+
+> **Status:** qa-tuning mandatory gate of T-510 (precision-preserving, **prompt-only**
+> change to `QwenWallBackend`). Verdict: **APPROVED.** This is the durable record of
+> the independent re-validation. The change touches only `_REASONING_INSTRUCTION`
+> step 4 (an answer must appear VERBATIM before a question counts as answered) and
+> adds Example 8 (a dense transcript where the next line changes the subject — NOT
+> an answer — correct rating 5). No change to `WallDetector`, `SummonController`,
+> `AttentionLayer`, or the `WallVerdict` shape. T-510 fixes the recall miss
+> documented in §7.2 (the 7B confabulated a non-existent answer to a trivially-
+> knowable unanswered question in dense context). A recall-only lever; precision —
+> the success metric — is unaffected.
+
+### 8.1 Independent re-validation on the real `detect_wall(transcript, summary)` path
+
+Run independently by qa-tuning on the **real 7B** (`mlx-community/Qwen2.5-7B-Instruct-4bit`,
+default), the real `_build_messages` + `detect_wall` path, **5 runs each**, my own
+probes (not the engineer's harness). Deterministic across all 5 runs in every case.
+
+| # | Probe (real multi-line transcript) | Expected | Result (5 runs) | Verdict |
+|---|---|---|---:|---|
+| A | confab-trap: √81 asked, next line changes subject to algebra | **FIRE** | **5/5 FIRE** — `unanswered_question @ 0.95` | PASS |
+| B | genuinely-answered control: "√81?\nBob: It's 9.\nAlice: Right, thanks." | **SILENT** | **0/5** — `none @ 0.05` | PASS |
+| C | self-musing: "I wonder if my volume is too loud." | **SILENT** | **0/5** — `none @ 0.05` | PASS |
+| D | plain statement / plan: "Let's send the PR… then lunch." | **SILENT** | **0/5** — `none @ 0.05` | PASS |
+
+Captured reasoning confirms the guard is doing exactly the intended work:
+- **A (fires):** *"Bob asked a direct factual question. Alice changed the subject to
+  the algebra section, which is not an answer to the square root question.
+  Unanswered + answerable…"* — the previously-confabulated "Alice answered it" read
+  is gone; the model now correctly reads the subject-change line as a non-answer.
+- **B (silent — CRITICAL):** *"Bob asked a direct factual question. Alice answered
+  it, so the question is not unanswered."* — the verbatim guard does **NOT**
+  over-fire on a genuinely-answered question. This is the key precision check: the
+  guard tightens "what counts as answered" only against *confabulated* answers, not
+  real ones. **No precision regression.**
+
+**Conclusion:** the confab-trap is fixed (recall recovered) and the three no-fire
+guards stay silent (precision preserved). My results match the implementing
+engineer's independently.
+
+### 8.2 Committed-corpus eval precision unchanged: **0.75**
+
+Re-ran the committed corpus at the shipped config (§6 "How to re-run"):
+**precision = 0.75** (3 useful / 4 fires), identical to the T-503/T-508/T-509
+baseline. As expected: the fixtures carry *labeled* `observed_confidence` (not live
+7B output), so a prompt-only change cannot move the committed number. The lone false
+fire remains the deliberate `ff-false-wrong-category` detector-mis-naming test
+(§7.5), which caps this set at 0.75 and is irreducible by any threshold or prompt
+lever. **Stated plainly: precision is NOT regressed by T-510.**
+
+### 8.3 Pre-existing WDYN detector-level non-determinism — out of scope, covered
+
+Independently confirmed: the WDYN post-summon false positive at the *detector* level
+is **non-deterministic and pre-existing** (matches §7.4 / NOTES) — it is not
+introduced by T-510 (a prompt change to step 4 + Example 8 about *answered-question
+recall* has no bearing on the WDYN/engagement read). The **load-bearing** guard is
+the orchestrator's 6 s post-engagement cooldown (§3), which suppresses a WDYN-style
+wall *regardless* of the detector's read because it does not depend on the model's
+judgment. I re-ran `tests/test_t503_precision_tuning.py` — 14 passed, including
+`test_scenario_d_wdyn_within_cooldown_is_suppressed` (deterministic pin) and the
+documented `test_scenario_d_residual_wall_after_cooldown_is_not_suppressed` residual.
+**Call: out of scope for T-510, correctly covered by the cooldown. I do not disagree
+with the engineer; no escalation.**
+
+### 8.4 Suite + lint + live gate — green
+
+| Check | Command | Result |
+|---|---|---|
+| Full suite | `uv run pytest` | **529 passed** (4 warnings — pre-existing SWIG/deprecation, unrelated) |
+| Lint/format | `uv run ruff check` | **All checks passed** |
+| Live 7B gate | `pytest …::test_live_qwen_wall_detection_optional` | **1 passed** (ran, not skipped — 7B available locally) |
+| T-503 guards | `pytest tests/test_t503_precision_tuning.py` | **14 passed** |
+
+### 8.5 Verdict — **APPROVE**
+
+The change is precision-preserving and recall-recovering, exactly as scoped:
+1. The confab-trap fires deterministically (5/5) on the real `detect_wall` path with
+   correct reasoning (§8.1 A).
+2. The verbatim guard does **not** over-fire on a genuinely-answered question
+   (§8.1 B) — no precision regression at the detector level.
+3. Committed-corpus precision is unchanged at **0.75** (§8.2).
+4. WDYN non-determinism is pre-existing, out of scope, and covered by the cooldown
+   (§8.3).
+5. Suite green (529), ruff clean, live gate passes (§8.4).
+
+Recall is recovered on a real factual gap (a fire returned to the numerator that was
+previously lost to confabulated silence) with **zero cost to precision** — the
+correct posture on a precision-first metric. **Approved for merge.** The residual
+wh-form rating-3 recall ceiling (§7.6) and the `ff-false-wrong-category` detector
+mis-naming (§7.5) are unchanged by T-510 and remain the documented v1 levers, not
+v0 blockers.

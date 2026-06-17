@@ -1,4 +1,4 @@
-"""``QwenWallBackend`` — the real ``WallBackend`` on Qwen2.5/MLX (T-203, T-508, T-509).
+"""``QwenWallBackend`` — the real ``WallBackend`` on Qwen2.5/MLX (T-203, T-508, T-509, T-510).
 
 This is the Phase-2 fill of the frozen ``WallBackend`` seam declared in
 :mod:`jarvis.core.wall_detector`.  It replaces the ``HeuristicWallBackend``
@@ -33,6 +33,21 @@ Design decisions (``docs/ml/working-notes.md`` + ``docs/ml/slm-backend.md``
   explicitly the primary fire case, not an exclusion reason.  The system
   prompt, exemplars, and reasoning instruction all make this explicit.  Also
   adds an explicit exemplar (Example 7) for a plain-statement non-wall.
+* **Confabulated-answer guard (T-510).** The 7B had a context-sensitive RECALL
+  miss surfaced by the T-509 gate (docs/qa/threshold-tuning.md §7.2): in a
+  *dense* multi-line transcript it would confabulate that an interlocutor
+  already answered a trivially-knowable unanswered question (e.g. "What's the
+  square root of 81?") and rate it 1/none — captured ``reasoning`` (5/5 runs):
+  "Bob asked a direct arithmetic question, but Alice answered it. No gap." Alice
+  did not answer it; the model invents an answer from later (off-topic) lines to
+  justify silence. Reproduced deterministically (4/4) when a non-answer line
+  follows the question. Fix is precision-preserving and entirely in the prompt:
+  (a) ``_REASONING_INSTRUCTION`` step 4 now requires an answer to appear
+  VERBATIM before the question counts as answered — a later line that changes
+  the subject / acknowledges / stays silent is NOT an answer; (b) a new Example
+  8 models exactly this trap (dense context, √81 asked, next line changes
+  subject, correct rating 5). Recall-only lever; precision (the success metric)
+  is unaffected. See docs/qa/threshold-tuning.md §8 for the qa gate.
 * **Model escalated to 7B (T-509).** Switched from
   ``mlx-community/Qwen2.5-3B-Instruct-4bit`` to
   ``mlx-community/Qwen2.5-7B-Instruct-4bit``.  Joint budget re-measured on
@@ -197,6 +212,18 @@ _EXEMPLARS = (
     '  → {"reasoning": "This is a decision/plan, not a question or expressed gap.'
     ' Nobody is asking for information.",'
     ' "rating": 1, "category": "none", "offer": ""}\n'
+    "\n"
+    "Example 8 — dense context; later line does NOT answer the question (rate HIGH):\n"
+    '  Transcript: "Alice: Let\'s get through this geometry homework set.\\n'
+    "Bob: The first problems are about triangles.\\n"
+    "Bob: What's the square root of 81?\\n"
+    'Alice: And then we still have the algebra section to do."\n'
+    '  → {"reasoning": "Bob asked a direct factual question. Alice\'s next line'
+    " changes the subject (the algebra section) — it is NOT an answer, and the"
+    " number 9 never appears anywhere in the transcript. Do NOT assume it was"
+    " answered just because the conversation continued. Unanswered + answerable +"
+    ' group-directed = rate 5.",'
+    ' "rating": 5, "category": "unanswered_question", "offer": "That\'s 9."}\n'
 )
 
 _CATEGORY_DEFINITIONS = (
@@ -222,7 +249,11 @@ _REASONING_INSTRUCTION = (
     " Do NOT subtract for it being direct.)\n"
     "2. Is it factual/answerable by Jarvis?\n"
     "3. Is it directed at the GROUP (not at Jarvis, not at self, not rhetorical)?\n"
-    "4. Has anyone in the transcript already answered it?\n"
+    "4. Has anyone ALREADY answered it? Count it answered ONLY if the actual\n"
+    "   answer text appears VERBATIM in a later transcript line. Do NOT infer or\n"
+    "   assume an answer was given just because the conversation continued — a\n"
+    "   later line that changes the subject, acknowledges, or stays silent is\n"
+    "   NOT an answer. If no answer text is present, the question is UNANSWERED.\n"
     "Then assign a RATING 1–5:\n"
     "  5 = direct unanswered factual question from the group;"
     " OR unambiguous factual gap, clearly answerable\n"
