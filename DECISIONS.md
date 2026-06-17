@@ -18,6 +18,15 @@ Keep entries short. One paragraph per field is plenty. If it takes more, it prob
 
 ---
 
+## 2026-06-17 — Answered-question over-fire accepted as a known v1 limit (not promptable on 7B)
+
+**Decided by:** human (after orchestrator's decisive real-path probe)
+**Status:** accepted
+**Context:** `QwenWallBackend` (7B) over-fires `unanswered_question @ 0.95` when a factual question is asked AND answered in the same rolling window (it fails to read the answer line) — a precision bug. T-511 tried to fix it with prompt exemplars.
+**Decision:** Stop prompt-iterating; **revert T-511 to the T-510 baseline (`9ac28c5`)** and document this as a known v1 limit; it is fixable only by **fine-tuning**, not prompting.
+**Rationale:** Two prompt iterations each fixed only the exact exemplar strings and broke on the next phrasing — decisive real-path probe: `What's 4 times 7?`/`It's 28.` → 0/5 but `What is 4 times 7?`/`It's 28.` → 5/5, and √81-answered → 5/5. The 7B pattern-matches the exact question string, not whether it was answered → infinite whack-a-mole (r2 even regressed the √81-answered control). Matches the prior-art research (a 3B/7B reading-reliability limit). Narrow edge case (asked+answered+re-detected in one window); live runs never hit it; the working v0 is unaffected.
+**Alternatives considered:** Keep iterating prompts (rejected — confirmed non-converging). Fine-tune the wall classifier on labeled answered/unanswered windows (the real fix — parked as a scoped v1 project; `--capture` seeds the dataset). Full analysis + probe table: `docs/ml/wall-detector-v1-limits.md`.
+
 ## 2026-06-16 — T-509 qa gate: 7B switch APPROVED on the real multi-line detect_wall path
 
 **Decided by:** qa-tuning (Claude Code)

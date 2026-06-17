@@ -17,7 +17,17 @@ Informal session-to-session handoff scratchpad. Read this first when starting a 
 
 ---
 
-## Current state — 2026-06-16 (T-509 in REVIEW → escalated to Qwen2.5-7B, real-path regression fixed)
+## Current state — 2026-06-17 (interjection brain DONE on 7B; T-511 cancelled → answered-question over-fire is a known v1 limit)
+
+**Phase:** phase_5 field-fix. The interjection overhaul is complete and shipped: **Qwen2.5-7B** wall detector, graded confidence, direct factual questions fire (live-validated: √81 → "That's 9." @ 0.95, no wake word), confab-trap handled (T-510). Suite **529 green**, ruff clean. **On `main` = `origin/main` (`9ac28c5`, pushed).**
+
+**T-511 CANCELLED (2026-06-17) — answered-question over-fire is a known v1 limit.** A factual question asked AND answered in the same window over-fires (the 7B can't reliably read the answer line). Confirmed **NOT promptable**: two iterations each fixed only exact exemplar strings and broke on the next phrasing (probe: `What's 4 times 7?`/`It's 28.` → 0/5 but `What is …` → 5/5; √81-answered → 5/5). **Reverted to the T-510 baseline (`9ac28c5`)**; documented in `docs/ml/wall-detector-v1-limits.md` + `DECISIONS.md` (2026-06-17). Fix is **fine-tuning, not prompting** (per `interjection-prior-art.md`). Narrow edge case; live runs never hit it. Discarded iteration commits (reflog): `4d72de9 8a4af08 4f76769 a2ce5e4 c8d2e42`.
+
+**Deferred v1 levers (none blocking):** answered-question over-fire (fine-tune); wh-form declarative recall; 7B always-on thermal/battery soak (T-504).
+
+---
+
+## Prior state — 2026-06-16 (T-509 in REVIEW → escalated to Qwen2.5-7B, real-path regression fixed)
 
 **Phase:** phase_5 field-fix. T-509 (escalate local brain to Qwen2.5-7B + fix the T-508 prompt-framing regression) is in **`review`** (local-ml-engineer; the agent was killed at the final commit step — the orchestrator committed the work + finished the bookkeeping). Suite **527 green**, ruff clean. On `main`, NOT pushed.
 
