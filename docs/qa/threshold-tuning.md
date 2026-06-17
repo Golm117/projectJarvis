@@ -543,3 +543,67 @@ correct posture on a precision-first metric. **Approved for merge.** The residua
 wh-form rating-3 recall ceiling (§7.6) and the `ff-false-wrong-category` detector
 mis-naming (§7.5) are unchanged by T-510 and remain the documented v1 levers, not
 v0 blockers.
+
+### 8.6 Second independent gate run (this session) — APPROVE, with one honest caveat
+
+I re-ran the gate from scratch on the **real 7B** `detect_wall` path (default
+`Qwen2.5-7B-Instruct-4bit`, `_build_messages` → `generate`), my own probes, 5 runs
+each. Headline cases all confirm the §8.1 picture **and** I added two stress probes
+(a confab-trap variant with a different subject-change/summary, and a *second*
+genuinely-answered control on 4×7). Results:
+
+| # | Probe (real multi-line + summary) | Expected | Fires (5 runs) | Verdict |
+|---|---|---|---:|---|
+| A | confab-trap: √81, next line → algebra | FIRE | 5/5 | PASS |
+| A2 | confab-trap **variant**: √81, next line → "take a break", new summary | FIRE | 5/5 | PASS |
+| B | genuinely-answered √81 ("Alice: It's 9.") | SILENT | 0/5 | PASS |
+| B2 | genuinely-answered **4×7** ("Bob: That's 28.") | SILENT | **5/5 FIRE** | ⚠️ over-fire |
+| C | self-musing (volume) | SILENT | 0/5 | PASS |
+| D | plain plan (push PR / lunch) | SILENT | 0/5 | PASS |
+| E | WDYN post-summon (`[Jarvis engaged]`) | SILENT | 0/5 | PASS |
+| F | 4×7 **unanswered** dense | FIRE | 5/5 | PASS |
+
+**B2 is a real detector-level false fire on a *genuinely-answered* question** — the
+exact risk the brief flagged for the verbatim rule. The model's reasoning literally
+says *"Alice asked a direct arithmetic question. Nobody answered."* — it does not
+read Bob's "That's 28." line as an answer. Phrasing-invariant: "That's 28.",
+"It's 28.", and bare "28." all over-fire 3/3.
+
+**But it is PRE-EXISTING, not a T-510 regression — proven by git-stash A/B.** I ran
+B2 against **both** the pre-T-510 prompt (`57e409e^`, simple step 4 "Has anyone
+already answered it?", no Example 8) and HEAD, same model, same input:
+
+| Case | PRE-T510 | POST-T510 (HEAD) | T-510 effect |
+|---|---|---|---|
+| √81 confab-trap (subject-change) | **1/1/1 miss** | **5/5/5 fire** | ✅ FIXED (the intended recall) |
+| √81 genuinely answered ("It's 9.") | 1/1/1 silent | 1/1/1 silent | ✅ unchanged |
+| **4×7 genuinely answered ("That's 28.")** | **5/5/5 over-fire** | **5/5/5 over-fire** | ⚠️ **unchanged / pre-existing** |
+
+The 4×7-answered over-fire is identical before and after T-510, with identical
+"nobody answered" reasoning. The verbatim rule did **not** cause it and does **not**
+worsen it. Decisively, the *structurally analogous* √81-answered case (the same shape
+Example 8's trap models) is correctly suppressed both before **and** after — direct
+evidence the verbatim rule does **not** over-generalise into treating real answers as
+open. The B2 quirk is a content-specific 7B recall failure to *read* the 4×7 answer
+line, orthogonal to the verbatim/Example-8 lever.
+
+**Therefore T-510 is precision-neutral and recall-positive — APPROVE stands.** It does
+exactly what it claims: recovers the √81 confab miss (and a variant) at zero
+incremental precision cost. The §8.1 write-up's single answered-control ("It's 9.")
+happened not to exercise the 4×7 content, so its "the verbatim guard does NOT
+over-fire on a genuinely-answered question" claim is **true for T-510's lever** but is
+*not* a blanket statement about the 7B — the 7B independently over-fires on
+answered 4×7. I am recording that here so the corpus reflects it.
+
+**Pre-existing 4×7-answered over-fire → flagged as a separate tracked item** (a
+detector-level recall failure to read a verbatim answer; NOT a T-510 blocker). The
+load-bearing production guard remains precision-first + the T-503 cooldown; this is a
+v1 prompt/eval lever (e.g. an answered-question exemplar pair or a fixture), not a v0
+blocker. Spawned as a background task.
+
+**Frozen-module invariant re-verified:** `git diff b8cdee5..HEAD` over
+`types.py` + `wall_detector.py` + `summon_controller.py` + `turn_taking_gate.py` is
+**0 lines**. Suite **529 passed**, `ruff check` clean, live gate
+`test_live_qwen_wall_detection_optional` **1 passed** (ran on 7B), T-503 guards
+**14 passed**. Committed-corpus precision **0.75** (3 useful / 4 fires);
+`ff-false-wrong-category` confirmed the lone false fire (per-fixture breakdown).
